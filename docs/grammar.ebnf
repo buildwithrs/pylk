@@ -1,0 +1,212 @@
+(*
+    PyLike Language - EBNF Grammar
+    ---------------------------------------------------------------
+    A Python-flavored language whose blocks are delimited by '{' and '}'
+    (indentation is NOT significant). Statements within a block are
+    separated by ';'. Newlines are treated like ordinary whitespace.
+
+    Notation:
+        =     production rule
+        |     alternative
+        { }   repetition, zero or more times
+        [ ]   optional, zero or one time
+        ( )   grouping
+        " "   literal terminal
+        ;     rule terminator
+        (* *) comment
+*)
+
+(* ============================================================ *)
+(*  Program                                                      *)
+(* ============================================================ *)
+
+program         = statement_list ;
+
+statement_list  = { statement } ;
+
+(* ------------------------------------------------------------ *)
+(*  Statements                                                   *)
+(*                                                                *)
+(*  Note: '{' '}' at statement position is a *block*. At         *)
+(*  expression position it is a *dict literal*; the parser       *)
+(*  disambiguates by syntactic context.                          *)
+(* ------------------------------------------------------------ *)
+
+statement       = import_stmt
+                | func_decl
+                | class_decl
+                | var_decl
+                | if_stmt
+                | while_stmt
+                | for_stmt
+                | return_stmt
+                | break_stmt
+                | continue_stmt
+                | try_stmt
+                | expr_stmt
+                | block
+                ;
+
+block           = "{" statement_list "}" ;
+
+
+(* ============================================================ *)
+(*  Declarations                                                 *)
+(* ============================================================ *)
+
+import_stmt     = "import" identifier { "." identifier } [ "as" identifier ] ";" ;
+
+func_decl       = "def" identifier "(" [ param_list ] ")" [ return_annot ] block ;
+return_annot    = "->" type_expr ;
+
+param_list      = parameter { "," parameter } ;
+parameter       = identifier [ ":" type_expr ] [ "=" expression ] ;
+
+class_decl      = "class" identifier [ "(" type_expr ")" ] "{" { class_member } "}" ;
+class_member    = func_decl | var_decl ;
+
+var_decl        = "let"   identifier [ ":" type_expr ] [ "=" expression ] ";"
+                | "const" identifier [ ":" type_expr ] "=" expression ";"
+                ;
+
+
+(* ============================================================ *)
+(*  Control Flow                                                 *)
+(* ============================================================ *)
+
+if_stmt         = "if" "(" expression ")" block
+                  { "elif" "(" expression ")" block }
+                  [ "else" block ] ;
+
+while_stmt      = "while" "(" expression ")" block ;
+
+for_stmt        = "for" identifier "in" expression block ;
+
+return_stmt     = "return" [ expression ] ";" ;
+break_stmt      = "break" ";" ;
+continue_stmt   = "continue" ";" ;
+
+try_stmt        = "try" block
+                  { "catch" "(" [ identifier [ ":" type_expr ] ] ")" block }
+                  [ "finally" block ] ;
+expr_stmt       = expression ";" ;
+
+
+(* ============================================================ *)
+(*  Expressions                                                  *)
+(*                                                                *)
+(*  Operator precedence (low -> high):                           *)
+(*    1.  assignment                                              *)
+(*    2.  ternary   (cond ? a : b)                                *)
+(*    3.  logical-or    ||                                         *)
+(*    4.  logical-and   &&                                         *)
+(*    5.  equality       == !=                                     *)
+(*    6.  relational     <  <=  >  >=                              *)
+(*    7.  additive        +  -                                     *)
+(*    8.  multiplicative  *  /  %                                  *)
+(*    9.  unary            -  +  !                                 *)
+(*   10.  power            **  (right-associative)                 *)
+(*   11.  postfix          ()  []  .                               *)
+(*   12.  primary                                                *)
+(* ============================================================ *)
+
+expression      = lambda_expr | assignment ;
+
+assignment      = identifier assign_op assignment
+                | ternary_expr ;
+
+assign_op       = "="
+                | "+=" | "-=" | "*=" | "/=" | "%=" | "**="
+                ;
+
+ternary_expr    = logical_or [ "?" expression ":" expression ] ;
+
+logical_or      = logical_and { "||" logical_and } ;
+logical_and     = equality { "&&" equality } ;
+
+equality        = relational { ( "==" | "!=" ) relational } ;
+relational      = additive { ( "<" | "<=" | ">" | ">=" ) additive } ;
+
+additive        = multiplicative { ( "+" | "-" ) multiplicative } ;
+multiplicative  = unary { ( "*" | "/" | "%" ) unary } ;
+
+unary           = ( "-" | "+" | "!" ) unary | power ;
+power           = postfix [ "**" unary ] ;
+
+postfix         = primary { postfix_op } ;
+postfix_op      = "(" [ arg_list ] ")"
+                | "[" expression "]"
+                | "." identifier
+                ;
+
+arg_list        = expression { "," expression } ;
+
+primary         = literal
+                | identifier
+                | "(" expression ")"
+                | list_literal
+                | dict_literal
+                | lambda_expr
+                ;
+
+
+(* ============================================================ *)
+(*  Lambda (an expression form of `def`)                         *)
+(* ============================================================ *)
+
+lambda_expr     = "fn" "(" [ param_list ] ")" [ return_annot ] block ;
+
+
+(* ============================================================ *)
+(*  Literals                                                     *)
+(* ============================================================ *)
+
+literal         = number | string_literal | boolean | "null" ;
+
+number          = integer | float ;
+integer         = digit { digit } ;
+float           = digit { digit } "." digit { digit }
+                  [ ( "e" | "E" ) [ "+" | "-" ] digit { digit } ]
+                ;
+
+string_literal  = '"'  { string_char_double }   '"'
+                | "'"  { string_char_single }   "'"
+                ;
+(* string_char includes any character except the surrounding quote
+   and a literal newline, plus common escape sequences \n \t \r \\ \" \' *)
+
+boolean         = "true" | "false" ;
+
+list_literal    = "[" [ expression { "," expression } ] "]" ;
+
+dict_literal    = "{" [ dict_entry { "," dict_entry } ] "}" ;
+dict_entry      = expression ":" expression ;
+
+
+(* ============================================================ *)
+(*  Types                                                        *)
+(* ============================================================ *)
+
+type_expr       = union_type ;
+union_type      = primary_type { "|" primary_type } ;
+
+primary_type    = identifier
+                | list_type
+                | dict_type
+                | func_type
+                | "(" type_expr ")"
+                ;
+
+list_type       = "list" "[" type_expr "]" ;
+dict_type       = "dict" "[" type_expr "," type_expr "]" ;
+
+func_type       = "fn" "(" [ type_expr { "," type_expr } ] ")" "->" type_expr ;
+
+
+(* ============================================================ *)
+(*  Lexical Helpers                                              *)
+(* ============================================================ *)
+
+identifier      = ( letter | "_" ) { letter | digit | "_" } ;
+letter          = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
+digit           = "0" | "1" | ... | "9" ;
