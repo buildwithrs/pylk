@@ -65,9 +65,7 @@ parameter       = identifier [ ":" type_expr ] [ "=" expression ] ;
 class_decl      = "class" identifier [ "(" type_expr ")" ] "{" { class_member } "}" ;
 class_member    = func_decl | var_decl ;
 
-var_decl        = "let"   identifier [ ":" type_expr ] [ "=" expression ] ";"
-                | "const" identifier [ ":" type_expr ] "=" expression ";"
-                ;
+var_decl        = identifier [ ":" type_expr ] [ "=" expression ] ";" ;
 
 
 (* ============================================================ *)
@@ -87,7 +85,7 @@ break_stmt      = "break" ";" ;
 continue_stmt   = "continue" ";" ;
 
 try_stmt        = "try" block
-                  { "catch" "(" [ identifier [ ":" type_expr ] ] ")" block }
+                  { "except" "(" [ identifier [ ":" type_expr ] ] ")" block }
                   [ "finally" block ] ;
 expr_stmt       = expression ";" ;
 
@@ -97,17 +95,18 @@ expr_stmt       = expression ";" ;
 (*                                                                *)
 (*  Operator precedence (low -> high):                           *)
 (*    1.  assignment                                              *)
-(*    2.  ternary   (cond ? a : b)                                *)
-(*    3.  logical-or    ||                                         *)
-(*    4.  logical-and   &&                                         *)
-(*    5.  equality       == !=                                     *)
-(*    6.  relational     <  <=  >  >=                              *)
-(*    7.  additive        +  -                                     *)
-(*    8.  multiplicative  *  /  %                                  *)
-(*    9.  unary            -  +  !                                 *)
-(*   10.  power            **  (right-associative)                 *)
-(*   11.  postfix          ()  []  .                               *)
-(*   12.  primary                                                *)
+(*    2.  ternary   (a if cond else b)                            *)
+(*    3.  logical-or    or                                         *)
+(*    4.  logical-and   and                                        *)
+(*    5.  logical-not   not                                        *)
+(*    6.  equality       == !=                                     *)
+(*    7.  relational     <  <=  >  >=                              *)
+(*    8.  additive        +  -                                     *)
+(*    9.  multiplicative  *  /  %                                  *)
+(*   10.  unary            -  +                                    *)
+(*   11.  power            **  (right-associative)                 *)
+(*   12.  postfix          ()  []  .                               *)
+(*   13.  primary                                                *)
 (* ============================================================ *)
 
 expression      = lambda_expr | assignment ;
@@ -119,10 +118,11 @@ assign_op       = "="
                 | "+=" | "-=" | "*=" | "/=" | "%=" | "**="
                 ;
 
-ternary_expr    = logical_or [ "?" expression ":" expression ] ;
+ternary_expr    = logical_or [ "if" expression "else" expression ] ;
 
-logical_or      = logical_and { "||" logical_and } ;
-logical_and     = equality { "&&" equality } ;
+logical_or      = logical_and { "or" logical_and } ;
+logical_and     = logical_not { "and" logical_not } ;
+logical_not     = "not" logical_not | equality ;
 
 equality        = relational { ( "==" | "!=" ) relational } ;
 relational      = additive { ( "<" | "<=" | ">" | ">=" ) additive } ;
@@ -130,7 +130,7 @@ relational      = additive { ( "<" | "<=" | ">" | ">=" ) additive } ;
 additive        = multiplicative { ( "+" | "-" ) multiplicative } ;
 multiplicative  = unary { ( "*" | "/" | "%" ) unary } ;
 
-unary           = ( "-" | "+" | "!" ) unary | power ;
+unary           = ( "-" | "+" ) unary | power ;
 power           = postfix [ "**" unary ] ;
 
 postfix         = primary { postfix_op } ;
@@ -149,19 +149,18 @@ primary         = literal
                 | lambda_expr
                 ;
 
-
 (* ============================================================ *)
-(*  Lambda (an expression form of `def`)                         *)
+(*  Lambda (an expression form of `lambda`)                       *)
 (* ============================================================ *)
 
-lambda_expr     = "fn" "(" [ param_list ] ")" [ return_annot ] block ;
+lambda_expr     = "lambda" "(" [ param_list ] ")" [ return_annot ] block ;
 
 
 (* ============================================================ *)
 (*  Literals                                                     *)
 (* ============================================================ *)
 
-literal         = number | string_literal | boolean | "null" ;
+literal         = number | string_literal | boolean | "None" ;
 
 number          = integer | float ;
 integer         = digit { digit } ;
@@ -175,7 +174,7 @@ string_literal  = '"'  { string_char_double }   '"'
 (* string_char includes any character except the surrounding quote
    and a literal newline, plus common escape sequences \n \t \r \\ \" \' *)
 
-boolean         = "true" | "false" ;
+boolean         = "True" | "False" ;
 
 list_literal    = "[" [ expression { "," expression } ] "]" ;
 
@@ -190,17 +189,12 @@ dict_entry      = expression ":" expression ;
 type_expr       = union_type ;
 union_type      = primary_type { "|" primary_type } ;
 
-primary_type    = identifier
-                | list_type
-                | dict_type
+primary_type    = identifier [ "[" type_expr { "," type_expr } "]" ]
                 | func_type
                 | "(" type_expr ")"
                 ;
 
-list_type       = "list" "[" type_expr "]" ;
-dict_type       = "dict" "[" type_expr "," type_expr "]" ;
-
-func_type       = "fn" "(" [ type_expr { "," type_expr } ] ")" "->" type_expr ;
+func_type       = "lambda" "(" [ type_expr { "," type_expr } ] ")" "->" type_expr ;
 
 
 (* ============================================================ *)
