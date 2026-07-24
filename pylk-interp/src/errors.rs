@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-
 #[derive(Debug, Error)]
 pub enum LexerError {
     #[error("invalid string literal: {0}")]

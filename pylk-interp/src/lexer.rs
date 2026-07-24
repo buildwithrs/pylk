@@ -232,7 +232,10 @@ impl Lexer {
                     }
                 }
                 '-' => {
-                    if self.is_match('=') {
+                    if self.is_match('>') {
+                        self.advance();
+                        Ok(Token::Arrow)
+                    } else if self.is_match('=') {
                         self.advance();
                         Ok(Token::MinusAssign)
                     } else {
@@ -330,7 +333,10 @@ impl Lexer {
     }
 
     fn parse_string(&mut self, end: char) -> Result<Token, LexerError> {
-        println!("parsing string at pos: start({}), current({})", self.start, self.current);
+        println!(
+            "parsing string at pos: start({}), current({})",
+            self.start, self.current
+        );
         let mut s_end = false;
         while let Some(ch) = self.peek() {
             if ch != end {
@@ -346,7 +352,7 @@ impl Lexer {
             return Err(LexerError::InvalidString("unterminated string".to_string()));
         }
 
-        let start = self.start+1; // skip start ' or "
+        let start = self.start + 1; // skip start ' or "
         let s = String::from_iter(&self.chars[start..self.current]);
         self.advance(); // skip end
         Ok(Token::Str(s))
@@ -411,10 +417,16 @@ impl Lexer {
 
         let ident = String::from_iter(&self.chars[self.start..self.current]);
 
-        if is_keyword(&ident) {
-            return Ok(Token::Kw(Keyword::from(ident.as_ref())));
-        } else {
-            return Ok(Token::Ident(ident));
+        match ident.as_str() {
+            "True" => Ok(Token::Bool(true)),
+            "False" => Ok(Token::Bool(false)),
+            _ => {
+                if is_keyword(&ident) {
+                    return Ok(Token::Kw(Keyword::from(ident.as_ref())));
+                } else {
+                    return Ok(Token::Ident(ident));
+                }
+            }
         }
     }
 
@@ -474,24 +486,26 @@ mod tests {
         assert!(tokens_result.is_ok());
 
         let tokens = tokens_result.unwrap();
-        assert_eq!(tokens, vec![
-            Token::Ident("a".to_string()),
-            Token::Assign,
-            Token::Float(1.0),
-            Token::Semi,
-            Token::Ident("b".to_string()),
-            Token::Assign,
-            Token::Float(2.0),
-            Token::Semi,
-            Token::Ident("c".to_string()),
-            Token::Assign,
-            Token::Ident("a".to_string()),
-            Token::Plus,
-            Token::Ident("b".to_string()),
-            Token::Semi,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Ident("a".to_string()),
+                Token::Assign,
+                Token::Float(1.0),
+                Token::Semi,
+                Token::Ident("b".to_string()),
+                Token::Assign,
+                Token::Float(2.0),
+                Token::Semi,
+                Token::Ident("c".to_string()),
+                Token::Assign,
+                Token::Ident("a".to_string()),
+                Token::Plus,
+                Token::Ident("b".to_string()),
+                Token::Semi,
+            ]
+        );
     }
-
 
     #[test]
     fn test_lexer_string() {
@@ -506,22 +520,23 @@ mod tests {
         let tokens_result = lexer.lex();
         assert!(tokens_result.is_ok());
 
-
-
         let tokens = tokens_result.unwrap();
-        assert_eq!(tokens, vec![
-            Token::Ident("a".to_string()),
-            Token::Assign,
-            Token::Float(1.0),
-            Token::Semi,
-            Token::Ident("b".to_string()),
-            Token::Assign,
-            Token::Float(2.0),
-            Token::Semi,
-            Token::Ident("c".to_string()),
-            Token::Assign,
-            Token::Str("Hello".to_string()),
-            Token::Semi,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Ident("a".to_string()),
+                Token::Assign,
+                Token::Float(1.0),
+                Token::Semi,
+                Token::Ident("b".to_string()),
+                Token::Assign,
+                Token::Float(2.0),
+                Token::Semi,
+                Token::Ident("c".to_string()),
+                Token::Assign,
+                Token::Str("Hello".to_string()),
+                Token::Semi,
+            ]
+        );
     }
 }
