@@ -5,6 +5,26 @@
     (indentation is NOT significant). Statements within a block are
     separated by ';'. Newlines are treated like ordinary whitespace.
 
+    All other syntax follows Python conventions:
+        - `and` / `or` / `not` for logical operations
+        - `True` / `False` / `None` for built-in constants
+        - `lambda params : expr` for anonymous functions
+        - `a if cond else b` for ternary expressions
+        - `def`, `class`, `import`, `for ... in ...`, `while`, `if/elif/else`
+          all behave like Python, with braces instead of ':'+indentation
+        - NO `try` / `except` / `catch` / `finally` blocks
+        - NO class inheritance
+
+    Extended operators (Python-compatible):
+        - bitwise    |  ^  &  ~     (note: `|` doubles as type-union separator
+                                     in type annotations, disambiguated by context)
+        - shift      <<  >>
+        - floor div  //           matmul @
+        - full set of compound assignments including //= @= &= |= ^= <<= >>=
+        - tuple literals `(a, b, c)` and set literals `{a, b, c}`
+        - slicing     a[i:j:k]
+        - tuple destructuring and assignable l-values (attr / index)
+
     Notation:
         =     production rule
         |     alternative
@@ -24,25 +44,27 @@ program         = statement_list ;
 
 statement_list  = { statement } ;
 
+
 (* ------------------------------------------------------------ *)
 (*  Statements                                                   *)
 (*                                                                *)
 (*  Note: '{' '}' at statement position is a *block*. At         *)
-(*  expression position it is a *dict literal*; the parser       *)
-(*  disambiguates by syntactic context.                          *)
+(*  expression position it is a *dict* or *set literal*; the      *)
+(*  parser disambiguates by syntactic context.                  *)
+(*                                                                *)
+(*  Variables are introduced by plain assignment expressions     *)
+(*  (`x = 5;`) — Python-style, no `let` / `const` keyword.       *)
 (* ------------------------------------------------------------ *)
 
 statement       = import_stmt
                 | func_decl
                 | class_decl
-                | var_decl
                 | if_stmt
                 | while_stmt
                 | for_stmt
                 | return_stmt
                 | break_stmt
                 | continue_stmt
-                | try_stmt
                 | expr_stmt
                 | block
                 ;
@@ -62,21 +84,22 @@ return_annot    = "->" type_expr ;
 param_list      = parameter { "," parameter } ;
 parameter       = identifier [ ":" type_expr ] [ "=" expression ] ;
 
-class_decl      = "class" identifier [ "(" type_expr ")" ] "{" { class_member } "}" ;
-class_member    = func_decl | var_decl ;
+(* Classes do not support inheritance - there is no parent/base class
+   syntax. A class declares a name and a body of members only.         *)
 
-var_decl        = identifier [ ":" type_expr ] [ "=" expression ] ";" ;
+class_decl      = "class" identifier "{" { class_member } "}" ;
+class_member    = func_decl | expr_stmt ;
 
 
 (* ============================================================ *)
 (*  Control Flow                                                 *)
 (* ============================================================ *)
 
-if_stmt         = "if" "(" expression ")" block
-                  { "elif" "(" expression ")" block }
+if_stmt         = "if" expression block
+                  { "elif" expression block }
                   [ "else" block ] ;
 
-while_stmt      = "while" "(" expression ")" block ;
+while_stmt      = "while" expression block ;
 
 for_stmt        = "for" identifier "in" expression block ;
 
@@ -84,9 +107,6 @@ return_stmt     = "return" [ expression ] ";" ;
 break_stmt      = "break" ";" ;
 continue_stmt   = "continue" ";" ;
 
-try_stmt        = "try" block
-                  { "except" "(" [ identifier [ ":" type_expr ] ] ")" block }
-                  [ "finally" block ] ;
 expr_stmt       = expression ";" ;
 
 
@@ -94,66 +114,116 @@ expr_stmt       = expression ";" ;
 (*  Expressions                                                  *)
 (*                                                                *)
 (*  Operator precedence (low -> high):                           *)
-(*    1.  assignment                                              *)
-(*    2.  ternary   (a if cond else b)                            *)
-(*    3.  logical-or    or                                         *)
-(*    4.  logical-and   and                                        *)
-(*    5.  logical-not   not                                        *)
-(*    6.  equality       == !=                                     *)
-(*    7.  relational     <  <=  >  >=                              *)
-(*    8.  additive        +  -                                     *)
-(*    9.  multiplicative  *  /  %                                  *)
-(*   10.  unary            -  +                                    *)
-(*   11.  power            **  (right-associative)                 *)
-(*   12.  postfix          ()  []  .                               *)
-(*   13.  primary                                                *)
+(*    1.  lambda                                                  *)
+(*    2.  ternary          a if cond else b                        *)
+(*    3.  logical-or       or                                      *)
+(*    4.  logical-and      and                                     *)
+(*    5.  equality         == !=                                   *)
+(*    6.  relational       <  <=  >  >=                            *)
+(*    7.  bitwise-or       |                                       *)
+(*    8.  bitwise-xor      ^                                       *)
+(*    9.  bitwise-and      &                                       *)
+(*   10.  shift            << >>                                   *)
+(*   11.  additive         +  -                                    *)
+(*   12.  multiplicative   *  /  //  %  @                          *)
+(*   13.  unary            -  +  not  ~                            *)
+(*   14.  power            **  (right-associative)                 *)
+(*   15.  postfix          ()  []  .  [:]                          *)
+(*   16.  primary                                                 *)
 (* ============================================================ *)
 
 expression      = lambda_expr | assignment ;
 
-assignment      = identifier assign_op assignment
-                | ternary_expr ;
-
-assign_op       = "="
-                | "+=" | "-=" | "*=" | "/=" | "%=" | "**="
+(* Assignment target - supported shapes (mirrors AST AssignTarget):
+     x           plain identifier
+     x.y         attribute (single level)
+     x[i]        index  (single level, index only - not slice)
+     (a, b, c)   tuple destructure (identifiers only)                  *)
+assign_target   = identifier
+                | identifier "." identifier
+                | identifier "[" expression "]"
+                | "(" identifier { "," identifier } ")"
                 ;
 
-ternary_expr    = logical_or [ "if" expression "else" expression ] ;
+assignment      = assign_target assign_op assignment | ternary_expr ;
+
+assign_op       = "="
+                | "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "@="
+                | "&=" | "|=" | "^=" | "<<=" | ">>="
+                ;
+
+ternary_expr    = logical_or [ "if" logical_or "else" expression ] ;
 
 logical_or      = logical_and { "or" logical_and } ;
-logical_and     = logical_not { "and" logical_not } ;
-logical_not     = "not" logical_not | equality ;
+logical_and     = equality { "and" equality } ;
 
 equality        = relational { ( "==" | "!=" ) relational } ;
-relational      = additive { ( "<" | "<=" | ">" | ">=" ) additive } ;
+relational      = bitwise_or { ( "<" | "<=" | ">" | ">=" ) bitwise_or } ;
+
+bitwise_or      = bitwise_xor { "|" bitwise_xor } ;
+bitwise_xor     = bitwise_and { "^" bitwise_and } ;
+bitwise_and     = shift { "&" shift } ;
+shift           = additive { ( "<<" | ">>" ) additive } ;
 
 additive        = multiplicative { ( "+" | "-" ) multiplicative } ;
-multiplicative  = unary { ( "*" | "/" | "%" ) unary } ;
+multiplicative  = unary { ( "*" | "/" | "//" | "%" | "@" ) unary } ;
 
-unary           = ( "-" | "+" ) unary | power ;
+unary           = ( "-" | "+" | "not" | "~" ) unary | power ;
 power           = postfix [ "**" unary ] ;
 
 postfix         = primary { postfix_op } ;
 postfix_op      = "(" [ arg_list ] ")"
-                | "[" expression "]"
+                | "[" slice "]"
                 | "." identifier
+                ;
+
+(* Slice / index in postfix `[ ]`:
+     a[i]          index
+     a[i:j]        slice start..end
+     a[i:j:k]      slice with step
+     a[i:]         slice to end
+     a[:j]         slice from start
+     a[:]          full-slice copy
+     a[:j:k]       slice from start with step
+   Disambiguation: if the first token after `[` is `:`, it's a slice
+   starting with `:`; otherwise the first expression is parsed and `:` is
+   checked for the optional tail.                                         *)
+slice           = expression [ ":" [ expression ] [ ":" [ expression ] ] ]
+                | ":" [ expression ] [ ":" [ expression ] ]
                 ;
 
 arg_list        = expression { "," expression } ;
 
 primary         = literal
                 | identifier
-                | "(" expression ")"
+                | tuple_or_grouped
                 | list_literal
-                | dict_literal
-                | lambda_expr
+                | dict_or_set_literal
                 ;
 
+(* Tuple vs grouped-expression disambiguation:
+     ()            empty tuple
+     (x)           parenthesized expression
+     (x,)          single-element tuple
+     (x, y, z)     tuple
+   The presence of an interior or trailing comma forces tuple form.       *)
+tuple_or_grouped = "(" ")"
+                  | "(" expression { "," expression } ")"   (* tuple, >= 1 element *)
+                  | "(" expression ")"                     (* grouped *)
+                  ;
+
+
 (* ============================================================ *)
-(*  Lambda (an expression form of `lambda`)                       *)
+(*  Lambda                                                       *)
+(*                                                                *)
+(*  Python-style: lambda params : expression                      *)
+(*  Parameters are plain identifiers (no type annotations or     *)
+(*  default values - matches Python). The body is a single        *)
+(*  expression, not a block.                                      *)
 (* ============================================================ *)
 
-lambda_expr     = "lambda" "(" [ param_list ] ")" [ return_annot ] block ;
+lambda_expr     = "lambda" [ lambda_params ] ":" expression ;
+lambda_params   = identifier { "," identifier } ;
 
 
 (* ============================================================ *)
@@ -178,23 +248,49 @@ boolean         = "True" | "False" ;
 
 list_literal    = "[" [ expression { "," expression } ] "]" ;
 
-dict_literal    = "{" [ dict_entry { "," dict_entry } ] "}" ;
+(* Dict vs Set disambiguation:
+     {}            empty dict   (empty set has no literal form)
+     {k: v, ...}   dict literal
+     {x, y, z}     set literal
+   The parser distinguishes dict from set by inspecting the first
+   separator after the first expression: ':' begins a dict entry,
+   ',' / '}' marks a set element.                                       *)
+dict_or_set_literal = "{" [ dict_or_set_content ] "}" ;
+dict_or_set_content = expression
+                      ( ":" expression { "," dict_entry }   (* dict form *)
+                      | { "," expression }                  (* set form  *)
+                      ) ;
+
 dict_entry      = expression ":" expression ;
 
 
 (* ============================================================ *)
 (*  Types                                                        *)
+(*                                                                *)
+(*  Type annotations are always optional and follow the          *)
+(*  standard union / generic / callable syntax used in Python's   *)
+(*  typing module.                                                *)
+(*                                                                *)
+(*  Disambiguation note: `|` inside a `type_expr` is a type       *)
+(*  union separator; in regular expression position it is         *)
+(*  bitwise OR. The parser selects the meaning by syntactic      *)
+(*  context (annotation slot vs. value position).                 *)
 (* ============================================================ *)
 
 type_expr       = union_type ;
 union_type      = primary_type { "|" primary_type } ;
 
-primary_type    = identifier [ "[" type_expr { "," type_expr } "]" ]
+primary_type    = identifier
+                | list_type
+                | dict_type
                 | func_type
                 | "(" type_expr ")"
                 ;
 
-func_type       = "lambda" "(" [ type_expr { "," type_expr } ] ")" "->" type_expr ;
+list_type       = "list" "[" type_expr "]" ;
+dict_type       = "dict" "[" type_expr "," type_expr "]" ;
+
+func_type       = "(" [ type_expr { "," type_expr } ] ")" "->" type_expr ;
 
 
 (* ============================================================ *)

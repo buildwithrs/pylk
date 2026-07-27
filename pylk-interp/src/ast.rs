@@ -128,6 +128,10 @@ pub enum CompareOp {
     Ge, // >=
     Eq, // ==
     NotEq, // !=
+    In,
+    Is,
+    NotIn,
+    IsNot
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -158,12 +162,12 @@ pub struct DictEntry {
     value: Box<Expr>,
 }
 
-/// Stmt is the computation that return a value
+/// Expr is the computation that return a value
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Lambda {
         param_list: Vec<String>,
-        body: Box<Expr>,
+        expression: Box<Expr>,
     },
 
     Assign {

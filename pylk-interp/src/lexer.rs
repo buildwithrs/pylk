@@ -314,7 +314,7 @@ impl Lexer {
                     }
                 }
                 ch => {
-                    if ch.is_alphabetic() {
+                    if ch.is_alphabetic() || ch.eq(&'_') {
                         return self.parse_identifier();
                     } else if ch.is_digit(10) {
                         return self.parse_number();
@@ -409,7 +409,7 @@ impl Lexer {
     }
 
     fn parse_identifier(&mut self) -> Result<Token, LexerError> {
-        while self.peek().is_some_and(|d| d.is_alphanumeric()) {
+        while self.peek().is_some_and(|d| d.is_alphanumeric()|| d.eq(&'_')) {
             self.advance();
         }
 
@@ -472,7 +472,7 @@ pub fn is_keyword(ident: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::{Lexer, Token};
+    use crate::lexer::{Keyword, Lexer, Token};
 
     #[test]
     fn test_lexer_simple() {
@@ -534,6 +534,55 @@ mod tests {
                 Token::Assign,
                 Token::Str("Hello".to_string()),
                 Token::Semi,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_class() {
+        let source = r#"class Person {
+            def __init__(self, name, age) {
+                self.name = name;
+                self.age = age;
+            }
+        }"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens_result = lexer.lex();
+        println!("tokens_result: {:?}", tokens_result);
+        
+        assert!(tokens_result.is_ok());
+        let tokens = tokens_result.unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Kw(Keyword::Class),
+                Token::Ident("Person".to_string()),
+                Token::LBrace,
+                Token::Kw(Keyword::Def),
+                Token::Ident("__init__".to_string()),
+                Token::LParen,
+                Token::Ident("self".to_string()),
+                Token::Comma,
+                Token::Ident("name".to_string()),
+                Token::Comma,
+                Token::Ident("age".to_string()),
+                Token::RParen,
+                Token::LBrace,
+                Token::Ident("self".to_string()),
+                Token::Dot,
+                Token::Ident("name".to_string()),
+                Token::Assign,
+                Token::Ident("name".to_string()),
+                Token::Semi,
+                Token::Ident("self".to_string()),
+                Token::Dot,
+                Token::Ident("age".to_string()),
+                Token::Assign,
+                Token::Ident("age".to_string()),
+                Token::Semi,
+                Token::RBrace,
+                Token::RBrace,
             ]
         );
     }
