@@ -1,6 +1,4 @@
-use core::num;
-
-use crate::{errors::LexerError, lexer::Keyword::And};
+use crate::errors::LexerError;
 
 pub const KW: &[&str] = &[
     "None", "and", "as", "break", "class", "continue", "def", "del", "elif", "else", "for", "from",

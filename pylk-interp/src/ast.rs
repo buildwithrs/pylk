@@ -1,51 +1,73 @@
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program(Vec<Node>);
+
 /// an ast node
 #[derive(Debug, Clone, PartialEq)]
-pub enum Node {
-    Stmt(Stmt),
-    Expr(Expr),
+pub struct Node {
+    pub stmt: Stmt,
+    pub line: usize,
+    pub col: usize,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    name: String,
+    default: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Block(pub Vec<Stmt>);
 
 /// Stmt is the action that control the flow of program
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     ExprStmt(Box<Expr>),
-    Block(Vec<Stmt>),
-    Import {
-        pkg_name: String,
-    },
+    Block(Block),
     Func {
         name: String,
-        param_list: Vec<Expr>,
-        body: Box<Stmt>,
-        ret: Expr,
+        param_list: Vec<Parameter>,
+        body: Block,
     },
     Class {
         name: String,
-        funcs: Vec<Stmt>,
-        members: Vec<Stmt>,
+        members: Vec<Stmt>, // Vec<Funcs | ExprStmt>
     },
 
+    /// import a.b.c as x 
+    Import {
+        path: Vec<String>,
+        alias: Option<String>
+    },
+
+    
+    /*
+    if cond
+    elif cond1 {
+    } elif cond2 {
+     }
+     else {
+     }
+    */
     If {
         cond: Box<Expr>,
-        then: Box<Stmt>,
-        elif_cond: Option<Box<Expr>>,
-        elif_block: Option<Vec<Stmt>>,
-        else_branch: Option<Box<Stmt>>,
+        then: Block,
+        elif_branches: Vec<(Box<Expr>, Option<Block>)>,
+        else_branch: Option<Block>,
     },
 
     While {
-        cond: Option<Box<Expr>>,
-        body: Box<Stmt>,
+        cond: Box<Expr>,
+        body: Block,
     },
 
     For {
         loop_var: String,
-        in_expr: Box<Expr>,
-        body: Box<Stmt>,
+        iter_expr: Box<Expr>,
+        body: Block,
     },
 
     Return {
-        expr: Option<Box<Expr>>,
+        value: Option<Expr>,
     },
     Break,
     Continue,
@@ -59,7 +81,7 @@ pub enum AssignOperator {
     MulAssign,
     DivAssign,
     ModAssign,
-    PowAssign,
+    PowAssign, // **=
     FloorAssign,
     MatMulAssign,
     BitAndAssign,
@@ -71,19 +93,12 @@ pub enum AssignOperator {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
-    Lt,
-    Gt,
-    Le,
-    Ge,
-    Eq,
-    NotEq,
     Plus,
     Minus,
     Mul,
     Div,
     FloorDiv,
     Mod,
-    Power,
     BitAnd,
     BitOr,
     BitXor,
@@ -97,6 +112,22 @@ pub enum UnaryOp {
     Minus,  // -
     BitNot, // ~
     Not,    // not
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogicalOp {
+    And,
+    Or
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompareOp {
+    Lt, // <
+    Gt, // >
+    Le, // <=
+    Ge, // >=
+    Eq, // ==
+    NotEq, // !=
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,25 +152,38 @@ pub enum AssignTarget {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DictEntry {
+    key: Box<Expr>,
+    value: Box<Expr>,
+}
+
 /// Stmt is the computation that return a value
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Lambda {
-        args: Vec<String>,
-        body: Box<Stmt>,
+        param_list: Vec<String>,
+        body: Box<Expr>,
     },
+
     Assign {
         target: AssignTarget,
         op: AssignOperator,
         expr: Box<Expr>,
     },
     Attribute {
-        class_name: String,
+        target: Box<Expr>,
         field_name: String,
     },
     FuncCall {
-        fn_name: String,
+        fn_expr: Box<Expr>,
         args: Vec<Expr>,
+    },
+
+    /// arr[1], users['user001']
+    Index {
+        target: Box<Expr>,
+        index: Box<Expr>,
     },
 
     /// var = x if xxx else y
@@ -147,14 +191,6 @@ pub enum Expr {
         true_expr: Box<Expr>,
         test: Box<Expr>,
         else_expr: Box<Expr>,
-    },
-    LogicalOr {
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-    LogicalAnd {
-        left: Box<Expr>,
-        right: Box<Expr>,
     },
     BinaryExpr {
         left: Box<Expr>,
@@ -165,14 +201,25 @@ pub enum Expr {
         op: UnaryOp,
         expr: Box<Expr>,
     },
+    Power {
+        left: Box<Expr>,
+        right: Box<Expr>
+    },
+    Logical {
+        op: LogicalOp,
+        left: Box<Expr>,
+        right: Box<Expr>
+    },
+    Compare {
+        op: CompareOp,
+        left: Box<Expr>,
+        right: Box<Expr>
+    },
+
     Ident(String),
     Literal(LiteralExpr),
     ListLiteral(Vec<Expr>),
-    DictLiteral(Vec<Expr>),
-    DictEntry {
-        key: Box<Expr>,
-        value: Box<Expr>,
-    },
+    DictLiteral(Vec<DictEntry>),
     TupleLiteral(Vec<Expr>),
     SetLiteral(Vec<Expr>),
     /// a[1:6:2]

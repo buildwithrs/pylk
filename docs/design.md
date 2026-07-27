@@ -1,10 +1,12 @@
 # PyLike Interpreter Design
 
 - Does not support Indentation, use `{` and `}` for blocks.
+- Does not support class base class(no parent class).
 - Does not support `Try`, `Except`, `Finally`, `Raise`, or `Assert` statements.
 - Does not support `async` or `await` keywords.
 - Does not support `with` or `yield` statements.
 - Does not support `IMAGINARY` literals.
+- Does not support `type_annotations` or `type_comments`.
 
 ## Tokens
 
