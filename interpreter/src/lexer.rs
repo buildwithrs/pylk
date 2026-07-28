@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::errors::LexerError;
 
 pub const KW: &[&str] = &[
@@ -137,6 +139,163 @@ pub enum Token {
     Eof,
     WhiteSpace,
     Error(String),
+}
+
+/// Discriminant of [`Token`] without its associated data.
+///
+/// Lets parser code match on the kind of a token without needing to
+/// destructure or care about the value it carries.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub enum TokenType {
+    Kw,
+    Ident,
+    Int,
+    Float,
+    Bool,
+    Str,
+    Ellipsis,
+
+    Plus,
+    Minus,
+    Mul,
+    Pow,
+    Div,
+    FloorDiv,
+    Mod,
+    MatMul,
+    Shl,
+    Shr,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+
+    Assign,
+    PlusAssign,
+    MinusAssign,
+    MulAssign,
+    DivAssign,
+    FloorAssign,
+    ModAssign,
+    PowAssign,
+    MatMulAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
+    ShlAssign,
+    ShrAssign,
+    Walrus,
+
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+    Comma,
+    Colon,
+    Dot,
+    Semi,
+    Arrow,
+
+    Eof,
+    WhiteSpace,
+    Error,
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Display for TokenType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Token {
+    pub fn ident(&self) -> Option<String> {
+        if let Token::Ident(id) = self {
+            return Some(id.clone());
+        }
+        None
+    }
+
+    /// Returns the [`TokenType`] (kind) of this token.
+    pub fn token_type(&self) -> TokenType {
+        match self {
+            Token::Kw(_) => TokenType::Kw,
+            Token::Ident(_) => TokenType::Ident,
+            Token::Int(_) => TokenType::Int,
+            Token::Float(_) => TokenType::Float,
+            Token::Bool(_) => TokenType::Bool,
+            Token::Str(_) => TokenType::Str,
+            Token::Ellipsis => TokenType::Ellipsis,
+
+            Token::Plus => TokenType::Plus,
+            Token::Minus => TokenType::Minus,
+            Token::Mul => TokenType::Mul,
+            Token::Pow => TokenType::Pow,
+            Token::Div => TokenType::Div,
+            Token::FloorDiv => TokenType::FloorDiv,
+            Token::Mod => TokenType::Mod,
+            Token::MatMul => TokenType::MatMul,
+            Token::Shl => TokenType::Shl,
+            Token::Shr => TokenType::Shr,
+            Token::BitAnd => TokenType::BitAnd,
+            Token::BitOr => TokenType::BitOr,
+            Token::BitXor => TokenType::BitXor,
+            Token::BitNot => TokenType::BitNot,
+
+            Token::Lt => TokenType::Lt,
+            Token::Le => TokenType::Le,
+            Token::Gt => TokenType::Gt,
+            Token::Ge => TokenType::Ge,
+            Token::Eq => TokenType::Eq,
+            Token::Ne => TokenType::Ne,
+
+            Token::Assign => TokenType::Assign,
+            Token::PlusAssign => TokenType::PlusAssign,
+            Token::MinusAssign => TokenType::MinusAssign,
+            Token::MulAssign => TokenType::MulAssign,
+            Token::DivAssign => TokenType::DivAssign,
+            Token::FloorAssign => TokenType::FloorAssign,
+            Token::ModAssign => TokenType::ModAssign,
+            Token::PowAssign => TokenType::PowAssign,
+            Token::MatMulAssign => TokenType::MatMulAssign,
+            Token::BitAndAssign => TokenType::BitAndAssign,
+            Token::BitOrAssign => TokenType::BitOrAssign,
+            Token::BitXorAssign => TokenType::BitXorAssign,
+            Token::ShlAssign => TokenType::ShlAssign,
+            Token::ShrAssign => TokenType::ShrAssign,
+            Token::Walrus => TokenType::Walrus,
+
+            Token::LParen => TokenType::LParen,
+            Token::RParen => TokenType::RParen,
+            Token::LBracket => TokenType::LBracket,
+            Token::RBracket => TokenType::RBracket,
+            Token::LBrace => TokenType::LBrace,
+            Token::RBrace => TokenType::RBrace,
+            Token::Comma => TokenType::Comma,
+            Token::Colon => TokenType::Colon,
+            Token::Dot => TokenType::Dot,
+            Token::Semi => TokenType::Semi,
+            Token::Arrow => TokenType::Arrow,
+
+            Token::Eof => TokenType::Eof,
+            Token::WhiteSpace => TokenType::WhiteSpace,
+            Token::Error(_) => TokenType::Error,
+        }
+    }
 }
 
 pub struct Lexer {
@@ -409,7 +568,10 @@ impl Lexer {
     }
 
     fn parse_identifier(&mut self) -> Result<Token, LexerError> {
-        while self.peek().is_some_and(|d| d.is_alphanumeric()|| d.eq(&'_')) {
+        while self
+            .peek()
+            .is_some_and(|d| d.is_alphanumeric() || d.eq(&'_'))
+        {
             self.advance();
         }
 
@@ -472,7 +634,14 @@ pub fn is_keyword(ident: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::{Keyword, Lexer, Token};
+    use crate::{
+        errors::LexerError,
+        lexer::{Keyword, Lexer, Token, TokenType},
+    };
+
+    fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
+        Lexer::new(source).lex()
+    }
 
     #[test]
     fn test_lexer_simple() {
@@ -550,7 +719,7 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens_result = lexer.lex();
         println!("tokens_result: {:?}", tokens_result);
-        
+
         assert!(tokens_result.is_ok());
         let tokens = tokens_result.unwrap();
         assert_eq!(
@@ -584,6 +753,167 @@ mod tests {
                 Token::RBrace,
                 Token::RBrace,
             ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_operator_families() {
+        assert_eq!(
+            lex("+ - * ** / // % & | ^ ~ << >> < <= > >= == != = += -= *= /= %= **= &= |= ^=")
+                .unwrap(),
+            vec![
+                Token::Plus,
+                Token::Minus,
+                Token::Mul,
+                Token::Pow,
+                Token::Div,
+                Token::FloorDiv,
+                Token::Mod,
+                Token::BitAnd,
+                Token::BitOr,
+                Token::BitXor,
+                Token::BitNot,
+                Token::Shl,
+                Token::Shr,
+                Token::Lt,
+                Token::Le,
+                Token::Gt,
+                Token::Ge,
+                Token::Eq,
+                Token::Ne,
+                Token::Assign,
+                Token::PlusAssign,
+                Token::MinusAssign,
+                Token::MulAssign,
+                Token::DivAssign,
+                Token::ModAssign,
+                Token::PowAssign,
+                Token::BitAndAssign,
+                Token::BitOrAssign,
+                Token::BitXorAssign,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_delimiters_and_arrow() {
+        assert_eq!(
+            lex("()[]{} , : . ; ->").unwrap(),
+            vec![
+                Token::LParen,
+                Token::RParen,
+                Token::LBracket,
+                Token::RBracket,
+                Token::LBrace,
+                Token::RBrace,
+                Token::Comma,
+                Token::Colon,
+                Token::Dot,
+                Token::Semi,
+                Token::Arrow,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_keywords_booleans_and_identifiers() {
+        assert_eq!(
+            lex("if else while True False None _name className").unwrap(),
+            vec![
+                Token::Kw(Keyword::If),
+                Token::Kw(Keyword::Else),
+                Token::Kw(Keyword::While),
+                Token::Bool(true),
+                Token::Bool(false),
+                Token::Kw(Keyword::None),
+                Token::Ident("_name".to_string()),
+                Token::Ident("className".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_numbers() {
+        assert_eq!(
+            lex("0 3.14 .5 5. 1e6 1.25e-3").unwrap(),
+            vec![
+                Token::Float(0.0),
+                Token::Float(3.14),
+                Token::Float(0.5),
+                Token::Float(5.0),
+                Token::Float(1e6),
+                Token::Float(1.25e-3),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_empty_and_single_quoted_strings() {
+        assert_eq!(
+            lex(r#""" '' 'hello'"#).unwrap(),
+            vec![
+                Token::Str(String::new()),
+                Token::Str(String::new()),
+                Token::Str("hello".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_skips_whitespace() {
+        assert_eq!(
+            lex("\n\t foo \n bar\t").unwrap(),
+            vec![
+                Token::Ident("foo".to_string()),
+                Token::Ident("bar".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_rejects_unterminated_string() {
+        assert!(matches!(
+            lex("\"unterminated"),
+            Err(LexerError::InvalidString(_))
+        ));
+    }
+
+    #[test]
+    fn test_lexer_rejects_invalid_exponent() {
+        assert!(matches!(lex("1e+"), Err(LexerError::InvalidNumber(_))));
+    }
+
+    #[test]
+    fn test_lexer_rejects_standalone_bang() {
+        assert!(matches!(lex("!"), Err(LexerError::InvalidToken(_))));
+    }
+
+    #[test]
+    fn test_lexer_rejects_unsupported_character() {
+        assert!(matches!(lex("@"), Err(LexerError::UnsupportToken('@'))));
+    }
+
+    #[test]
+    fn test_token_type() {
+        // Discardable tokens map to the unit-style variants.
+        assert_eq!(Token::Plus.token_type(), TokenType::Plus);
+        assert_eq!(Token::Minus.token_type(), TokenType::Minus);
+        assert_eq!(Token::Eof.token_type(), TokenType::Eof);
+        assert_eq!(Token::WhiteSpace.token_type(), TokenType::WhiteSpace);
+
+        // Tokens with payloads map to the kind-only variant.
+        assert_eq!(
+            Token::Ident("foo".to_string()).token_type(),
+            TokenType::Ident
+        );
+        assert_eq!(Token::Int(42).token_type(), TokenType::Int);
+        assert_eq!(Token::Float(1.5).token_type(), TokenType::Float);
+        assert_eq!(Token::Bool(true).token_type(), TokenType::Bool);
+        assert_eq!(Token::Str("s".to_string()).token_type(), TokenType::Str);
+        assert_eq!(Token::Kw(Keyword::If).token_type(), TokenType::Kw,);
+        assert_eq!(
+            Token::Error("boom".to_string()).token_type(),
+            TokenType::Error,
         );
     }
 }

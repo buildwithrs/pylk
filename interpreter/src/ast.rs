@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, PartialEq)]
-pub struct Program(Vec<Node>);
+pub struct Program(pub Vec<Node>);
 
 /// an ast node
 #[derive(Debug, Clone, PartialEq)]
@@ -9,10 +9,20 @@ pub struct Node {
     pub col: usize,
 }
 
+impl Node {
+    pub fn new(stmt: Stmt) -> Self {
+        Self {
+            stmt,
+            line: 0,
+            col: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
-    name: String,
-    default: Option<Expr>,
+    pub name: String,
+    pub default: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,13 +43,12 @@ pub enum Stmt {
         members: Vec<Stmt>, // Vec<Funcs | ExprStmt>
     },
 
-    /// import a.b.c as x 
+    /// import a.b.c as x
     Import {
         path: Vec<String>,
-        alias: Option<String>
+        alias: Option<String>,
     },
 
-    
     /*
     if cond
     elif cond1 {
@@ -117,21 +126,21 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogicalOp {
     And,
-    Or
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompareOp {
-    Lt, // <
-    Gt, // >
-    Le, // <=
-    Ge, // >=
-    Eq, // ==
+    Lt,    // <
+    Gt,    // >
+    Le,    // <=
+    Ge,    // >=
+    Eq,    // ==
     NotEq, // !=
     In,
     Is,
     NotIn,
-    IsNot
+    IsNot,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,17 +216,17 @@ pub enum Expr {
     },
     Power {
         left: Box<Expr>,
-        right: Box<Expr>
+        right: Box<Expr>,
     },
     Logical {
         op: LogicalOp,
         left: Box<Expr>,
-        right: Box<Expr>
+        right: Box<Expr>,
     },
     Compare {
         op: CompareOp,
         left: Box<Expr>,
-        right: Box<Expr>
+        right: Box<Expr>,
     },
 
     Ident(String),

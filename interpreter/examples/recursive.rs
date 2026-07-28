@@ -1,4 +1,3 @@
-
 // binary tree
 struct BinaryTree {
     root: i64,
@@ -12,7 +11,4 @@ struct Node {
     right: Box<Node>,
 }
 
-
-fn main () {
-
-}
+fn main() {}
