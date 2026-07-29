@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::lexer::TokenType;
+use crate::lexer::{Token, TokenType};
 
 #[derive(Debug, Error)]
 pub enum LexerError {
@@ -27,4 +27,7 @@ pub enum ParserError {
 
     #[error("token is not identifier")]
     NotIdent,
+
+    #[error("unsupport: {0}")]
+    UnsupportToken(Token),
 }

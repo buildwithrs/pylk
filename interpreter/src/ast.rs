@@ -25,6 +25,17 @@ pub struct Parameter {
     pub default: Option<Expr>,
 }
 
+/// One entry on the right-hand side of a `from ... import ...` list.
+///
+/// `name` is the original identifier; `alias` is the local binding name
+/// when `as` is used. For a star-import (`from x import *`), the parser
+/// produces a single `ImportName` with `name == "*"` and `alias == None`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportName {
+    pub name: String,
+    pub alias: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block(pub Vec<Stmt>);
 
@@ -47,6 +58,14 @@ pub enum Stmt {
     Import {
         path: Vec<String>,
         alias: Option<String>,
+    },
+
+    /// from a.b.c import d, e as f
+    /// `from a.b.c import *` is represented by `names` containing a
+    /// single [`ImportName`] whose `name` is the literal string "*".
+    FromImport {
+        module: Vec<String>,
+        names: Vec<ImportName>,
     },
 
     /*
@@ -80,6 +99,7 @@ pub enum Stmt {
     },
     Break,
     Continue,
+    Pass,
 }
 
 #[derive(Debug, Clone, PartialEq)]

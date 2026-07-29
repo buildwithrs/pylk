@@ -76,7 +76,24 @@ block           = "{" statement_list "}" ;
 (*  Declarations                                                 *)
 (* ============================================================ *)
 
-import_stmt     = "import" identifier { "." identifier } [ "as" identifier ] ";" ;
+(* Two forms, sharing the dotted-name tail:
+
+     import a.b.c;           import a.b.c as x;
+     from a.b.c import d;
+     from a.b.c import d, e as f;
+     from a.b.c import *;
+
+   `*` is represented in the AST as a single ImportName whose `name`
+   field is the literal string "*" — matching CPython's convention. *)
+
+import_stmt     = ( "import" dotted_name [ "as" identifier ]
+                  | "from"  dotted_name "import" import_names
+                  ) ";" ;
+
+dotted_name     = identifier { "." identifier } ;
+import_names    = "*"
+                | import_name { "," import_name } ;
+import_name     = identifier [ "as" identifier ] ;
 
 func_decl       = "def" identifier "(" [ param_list ] ")" [ return_annot ] block ;
 return_annot    = "->" type_expr ;
