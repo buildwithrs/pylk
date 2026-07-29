@@ -19,8 +19,8 @@ pub enum LexerError {
 
 #[derive(Debug, Error)]
 pub enum ParserError {
-    #[error("expect token: {0}, but found: {1}")]
-    ExpectToken(TokenType, TokenType),
+    #[error("expect token type: {0}, but found: {1}")]
+    ExpectTokenType(TokenType, TokenType),
 
     #[error("program end")]
     EOF,
@@ -30,4 +30,7 @@ pub enum ParserError {
 
     #[error("unsupport: {0}")]
     UnsupportToken(Token),
+
+    #[error("expect token: {0}, but found: {1}")]
+    ExpectToken(Token, Token),
 }

@@ -79,7 +79,7 @@ pub enum Stmt {
     If {
         cond: Box<Expr>,
         then: Block,
-        elif_branches: Vec<(Box<Expr>, Option<Block>)>,
+        elif_branches: Vec<(Box<Expr>, Block)>,
         else_branch: Option<Block>,
     },
 

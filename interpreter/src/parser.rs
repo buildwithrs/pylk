@@ -1,5 +1,10 @@
 use crate::{
-    ast::{AssignOperator, AssignTarget, Block, Expr, ImportName, LiteralExpr, Node, Parameter, Program, Stmt}, errors::ParserError, lexer::{Keyword, Token, TokenType},
+    ast::{
+        AssignOperator, AssignTarget, Block, Expr, ImportName, LiteralExpr, Node, Parameter,
+        Program, Stmt,
+    },
+    errors::ParserError,
+    lexer::{Keyword, Token, TokenType},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,7 +38,7 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParserError> {
-        if let Some(cur) = self.advance() {
+        if let Some(cur) = self.peek() {
             match cur {
                 Token::Kw(Keyword::Import) => self.parse_import(),
                 Token::Kw(Keyword::From) => self.parse_from_import(),
@@ -47,7 +52,7 @@ impl Parser {
                 Token::Kw(Keyword::Break) => Ok(Stmt::Break),
                 Token::Kw(Keyword::Continue) => Ok(Stmt::Continue),
                 _ => {
-                    let exp = self.parse_expression(cur)?;
+                    let exp = self.parse_expression()?;
                     Ok(Stmt::ExprStmt(Box::new(exp)))
                 }
             }
@@ -59,6 +64,8 @@ impl Parser {
     /// Parses `import a.b.c [as alias]`. The leading `import` token
     /// has already been consumed by `parse_stmt`.
     fn parse_import(&mut self) -> Result<Stmt, ParserError> {
+        self.advance(); // consume 'import'
+
         let path = self.parse_dotted_name()?;
 
         let alias = if self.check(&Token::Kw(Keyword::As)) {
@@ -74,6 +81,8 @@ impl Parser {
     /// Parses `from a.b.c import name1, name2 as alias, *`.
     /// The leading `from` token has already been consumed by `parse_stmt`.
     fn parse_from_import(&mut self) -> Result<Stmt, ParserError> {
+        self.advance();
+
         let module = self.parse_dotted_name()?;
 
         let import_kw = self.advance();
@@ -149,32 +158,38 @@ impl Parser {
     }
 
     fn parse_class(&mut self) -> Result<Stmt, ParserError> {
+        self.advance();
+
         let class_name = self.expect_ident()?;
         let _ = self.consume(TokenType::LBrace)?;
 
-
-        let mut members= Vec::new();
+        let mut members = Vec::new();
         while !self.check(&Token::RBrace) {
-            let next = self.advance();
+            let next = self.peek();
             let member = match next {
                 Some(nt) => match nt {
                     Token::Kw(Keyword::Def) => self.parse_function(),
-                    _ => Ok(Stmt::ExprStmt(Box::new(self.parse_expression(nt)?)))
-                }
+                    _ => Ok(Stmt::ExprStmt(Box::new(self.parse_expression()?))),
+                },
 
-                None => Err(ParserError::EOF)
+                None => Err(ParserError::EOF),
             };
 
             members.push(member?);
         }
 
-        Ok(Stmt::Class { name: class_name, members: members })
+        Ok(Stmt::Class {
+            name: class_name,
+            members: members,
+        })
     }
 
     fn parse_function(&mut self) -> Result<Stmt, ParserError> {
+        self.advance();
+
         let fn_name = self.expect_ident()?;
         let _ = self.consume(TokenType::LParen)?;
-        
+
         // get arguments
         let mut args = Vec::new();
         while self.check(&Token::Comma) {
@@ -188,7 +203,11 @@ impl Parser {
         self.consume(TokenType::RParen)?;
 
         let body = self.parse_block()?;
-        Ok(Stmt::Func { name: fn_name, param_list: args, body: body })
+        Ok(Stmt::Func {
+            name: fn_name,
+            param_list: args,
+            body: body,
+        })
     }
 
     fn parse_block(&mut self) -> Result<Block, ParserError> {
@@ -204,42 +223,110 @@ impl Parser {
     }
 
     fn parse_if(&mut self) -> Result<Stmt, ParserError> {
-        todo!()
+        self.advance();
+
+        let cond = self.parse_expression()?;
+        let then = self.parse_block()?;
+        let mut elifs = Vec::new();
+        while self.check(&Token::Kw(Keyword::Elif)) {
+            self.advance();
+
+            let expr = self.parse_expression()?;
+            let blk = self.parse_block()?;
+            elifs.push((Box::new(expr), blk));
+        }
+
+        let mut else_block: Option<Block> = None;
+        if self.check(&Token::Kw(Keyword::Else)) {
+            self.advance();
+            else_block = Some(self.parse_block()?);
+        }
+
+        Ok(Stmt::If {
+            cond: Box::new(cond),
+            then,
+            elif_branches: elifs,
+            else_branch: else_block,
+        })
     }
 
     fn parse_while(&mut self) -> Result<Stmt, ParserError> {
-        todo!()
+        let _ = self.advance();
+
+        let expr = self.parse_expression()?;
+        Ok(Stmt::While {
+            cond: Box::new(expr),
+            body: self.parse_block()?,
+        })
     }
 
     fn parse_for(&mut self) -> Result<Stmt, ParserError> {
-        todo!()
+        self.advance();
+
+        let ident = self.expect_ident()?;
+
+        if !self.check(&Token::Kw(Keyword::In)) {
+            let cur = self.peek().unwrap();
+            return Err(ParserError::ExpectToken(Token::Kw(Keyword::In), cur));
+        }
+        self.advance();
+
+        let expr = self.parse_expression()?;
+        let block = self.parse_block()?;
+        Ok(Stmt::For {
+            loop_var: ident,
+            iter_expr: Box::new(expr),
+            body: block,
+        })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, ParserError> {
-        todo!()
+        self.advance();
+
+        let ret: Option<Expr> = if self.check(&Token::Semi) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+
+        Ok(Stmt::Return { value: ret })
     }
 
-    fn parse_expression(&mut self, t: Token) -> Result<Expr, ParserError> {
-        match t {
+    fn parse_expression(&mut self) -> Result<Expr, ParserError> {
+        let cur = self.advance();
+        if cur.is_none() {
+            return Err(ParserError::EOF);
+        }
+
+        match cur.unwrap() {
             Token::Kw(Keyword::Lambda) => self.parse_lambda(),
-            _ => self.parse_assignment(t),
+            tk => self.parse_assignment(tk),
         }
     }
 
     fn parse_lambda(&mut self) -> Result<Expr, ParserError> {
-        todo!()
+        let mut parameters = vec![self.expect_ident()?];
+        while self.check(&Token::Comma) {
+            self.advance();
+
+            parameters.push(self.expect_ident()?);
+        }
+
+        self.consume(TokenType::Semi);
+
+        let expr = self.parse_expression()?;
+        Ok(Expr::Lambda {
+            param_list: parameters,
+            expression: Box::new(expr),
+        })
     }
 
     fn parse_assignment(&mut self, t: Token) -> Result<Expr, ParserError> {
         // x = 123
         if let Token::Ident(x) = t {
             let _ = self.consume_oneof_types(&[TokenType::Assign])?;
-            let cur = self.advance();
-            if cur.is_none() {
-                return Err(ParserError::EOF);
-            }
 
-            let value = self.parse_expression(cur.unwrap())?;
+            let value = self.parse_expression()?;
             Ok(Expr::Assign {
                 target: AssignTarget::Name(x),
                 op: AssignOperator::Assign,
@@ -269,7 +356,7 @@ impl Parser {
 
         let tt = t.unwrap();
         if tt.token_type() != token_type {
-            return Err(ParserError::ExpectToken(token_type, tt.token_type()));
+            return Err(ParserError::ExpectTokenType(token_type, tt.token_type()));
         }
 
         Ok(tt)
@@ -283,10 +370,21 @@ impl Parser {
 
         let tt = t.unwrap();
         if !token_types.contains(&tt.token_type()) {
-            return Err(ParserError::ExpectToken(token_types[0], tt.token_type()));
+            return Err(ParserError::ExpectTokenType(
+                token_types[0],
+                tt.token_type(),
+            ));
         }
 
         Ok(tt)
+    }
+
+    fn peek(&self) -> Option<Token> {
+        if self.is_end() {
+            None
+        } else {
+            Some(self.tokens[self.current].clone())
+        }
     }
 
     fn advance(&mut self) -> Option<Token> {
@@ -469,11 +567,7 @@ mod tests {
         assert_eq!(
             program,
             Program(vec![Node::new(Stmt::FromImport {
-                module: vec![
-                    "pkg".to_string(),
-                    "sub".to_string(),
-                    "mod".to_string(),
-                ],
+                module: vec!["pkg".to_string(), "sub".to_string(), "mod".to_string(),],
                 names: vec![ImportName {
                     name: "x".to_string(),
                     alias: Some("y".to_string()),
