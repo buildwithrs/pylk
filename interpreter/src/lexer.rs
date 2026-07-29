@@ -222,6 +222,14 @@ impl Display for TokenType {
     }
 }
 
+
+pub fn assign_tokens() -> Vec<Token> {
+    vec![
+        Token::Assign,
+        Token::PlusAssign,
+    ]
+}
+
 impl Token {
     pub fn ident(&self) -> Option<String> {
         if let Token::Ident(id) = self {

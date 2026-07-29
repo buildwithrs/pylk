@@ -1,10 +1,10 @@
 use crate::{
     ast::{
-        AssignOperator, AssignTarget, Block, Expr, ImportName, LiteralExpr, Node, Parameter,
-        Program, Stmt,
+        AssignOperator, AssignTarget, BinaryOp, Block, CompareOp, DictEntry, Expr, ImportName,
+        LiteralExpr, LogicalOp, Node, Parameter, Program, Stmt, UnaryOp,
     },
     errors::ParserError,
-    lexer::{Keyword, Token, TokenType},
+    lexer::{self, Keyword, Token, TokenType},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -148,6 +148,32 @@ impl Parser {
         }
     }
 
+    fn expect_token(&mut self, expect_t: Token) -> Result<Token, ParserError> {
+        match self.advance() {
+            Some(t) => {
+                if t != expect_t {
+                    Ok(t)
+                } else {
+                    Err(ParserError::ExpectToken(expect_t, t))
+                }
+            }
+            None => Err(ParserError::EOF),
+        }
+    }
+
+    fn expect_assigns(&mut self) -> Result<Token, ParserError> {
+        match self.advance() {
+            Some(t) => {
+                if lexer::assign_tokens().contains(&t) {
+                    return Ok(t);
+                }
+
+                return Err(ParserError::UnsupportToken(t));
+            }
+            None => Err(ParserError::EOF),
+        }
+    }
+
     /// True if the next token equals `t` (without consuming it).
     fn check(&self, t: &Token) -> bool {
         if self.is_end() {
@@ -192,14 +218,24 @@ impl Parser {
 
         // get arguments
         let mut args = Vec::new();
-        while self.check(&Token::Comma) {
-            self.advance();
+        if !self.check(&Token::RParen) {
+            loop {
+                let name = self.expect_ident()?;
+                args.push(Parameter {
+                    name,
+                    default: None,
+                });
+                if !self.check(&Token::Comma) {
+                    break;
+                }
 
-            args.push(Parameter {
-                name: self.expect_ident()?,
-                default: None,
-            });
+                self.advance();
+                if !self.check(&Token::RParen) {
+                    break;
+                }
+            }
         }
+
         self.consume(TokenType::RParen)?;
 
         let body = self.parse_block()?;
@@ -214,7 +250,7 @@ impl Parser {
         self.consume(TokenType::LBrace)?;
 
         let mut stmts = Vec::new();
-        while self.check(&Token::RBrace) {
+        while !self.check(&Token::RBrace) {
             stmts.push(self.parse_stmt()?);
         }
         self.advance();
@@ -293,18 +329,16 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<Expr, ParserError> {
-        let cur = self.advance();
-        if cur.is_none() {
-            return Err(ParserError::EOF);
-        }
-
-        match cur.unwrap() {
+        let cur = self.peek().ok_or_else(|| ParserError::EOF)?;
+        match cur {
             Token::Kw(Keyword::Lambda) => self.parse_lambda(),
-            tk => self.parse_assignment(tk),
+            _ => self.parse_assignment(),
         }
     }
 
     fn parse_lambda(&mut self) -> Result<Expr, ParserError> {
+        self.advance();
+
         let mut parameters = vec![self.expect_ident()?];
         while self.check(&Token::Comma) {
             self.advance();
@@ -312,7 +346,7 @@ impl Parser {
             parameters.push(self.expect_ident()?);
         }
 
-        self.consume(TokenType::Semi);
+        self.consume(TokenType::Colon)?;
 
         let expr = self.parse_expression()?;
         Ok(Expr::Lambda {
@@ -321,20 +355,490 @@ impl Parser {
         })
     }
 
-    fn parse_assignment(&mut self, t: Token) -> Result<Expr, ParserError> {
-        // x = 123
-        if let Token::Ident(x) = t {
-            let _ = self.consume_oneof_types(&[TokenType::Assign])?;
+    fn parse_assignment(&mut self) -> Result<Expr, ParserError> {
+        let t = self.advance().ok_or_else(|| ParserError::EOF)?;
 
-            let value = self.parse_expression()?;
-            Ok(Expr::Assign {
-                target: AssignTarget::Name(x),
-                op: AssignOperator::Assign,
-                expr: Box::new(value),
+        match t {
+            Token::Ident(x) => {
+                let target = self.parse_assign_target(x)?;
+                Ok(Expr::Assign {
+                    target,
+                    op: AssignOperator::from(self.expect_assigns()?),
+                    expr: Box::new(self.parse_expression()?),
+                })
+            }
+
+            // tuple (x, y, z) = (1, 2, 3)
+            Token::LParen => {
+                let mut tuples = Vec::new();
+                while self.check(&Token::Comma) {
+                    self.advance();
+                    let var = self.expect_ident()?;
+                    tuples.push(var);
+                }
+                self.consume(TokenType::RParen)?;
+
+                Ok(Expr::Assign {
+                    target: AssignTarget::Tuple(tuples),
+                    op: AssignOperator::from(self.expect_assigns()?),
+                    expr: Box::new(self.parse_expression()?),
+                })
+            }
+
+            _ => self.parse_ternary_expr(),
+        }
+    }
+
+    /*
+    x           plain identifier
+     x.y         attribute (single level)
+     x[i]        index  (single level, index only - not slice)
+     (a, b, c)   tuple destructure (identifiers only)
+    */
+
+    fn parse_assign_target(&mut self, first: String) -> Result<AssignTarget, ParserError> {
+        if self.check(&Token::Dot) {
+            self.advance();
+            let attr = self.expect_ident()?;
+            Ok(AssignTarget::Attribute { obj: first, attr })
+        } else if self.check(&Token::LBracket) {
+            self.advance();
+
+            let expr = self.parse_expression()?;
+            self.consume(TokenType::RBracket)?;
+
+            Ok(AssignTarget::Indx {
+                name: first,
+                idx: Box::new(expr),
             })
         } else {
-            self.parse_literal(t)
+            Ok(AssignTarget::Name(first))
         }
+    }
+
+    fn parse_ternary_expr(&mut self) -> Result<Expr, ParserError> {
+        let logical_or = self.parse_logical_or()?;
+
+        if self.check(&Token::Kw(Keyword::If)) {
+            self.advance();
+
+            let expr = self.parse_logical_or()?;
+            self.expect_token(Token::Kw(Keyword::Else))?;
+
+            let else_branch = self.parse_expression()?;
+            return Ok(Expr::Ternary {
+                true_expr: Box::new(logical_or),
+                test: Box::new(expr),
+                else_expr: Box::new(else_branch),
+            });
+        }
+
+        Ok(logical_or)
+    }
+
+    fn parse_logical_or(&mut self) -> Result<Expr, ParserError> {
+        let left = self.parse_logical_and()?;
+        if self.check(&Token::Kw(Keyword::Or)) {
+            self.advance();
+
+            let right = self.parse_logical_and()?;
+            return Ok(Expr::Logical {
+                op: LogicalOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            });
+        }
+
+        Ok(left)
+    }
+
+    fn parse_logical_and(&mut self) -> Result<Expr, ParserError> {
+        let left = self.parse_equality()?;
+        if self.check(&Token::Kw(Keyword::And)) {
+            self.advance();
+
+            let right = self.parse_equality()?;
+            return Ok(Expr::Logical {
+                op: LogicalOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            });
+        }
+
+        Ok(left)
+    }
+
+    fn parse_equality(&mut self) -> Result<Expr, ParserError> {
+        let rel = self.parse_relational()?;
+        if self.check(&Token::Eq) || self.check(&Token::Ne) {
+            self.advance();
+
+            let cur = self.peek().ok_or(ParserError::EOF)?;
+            let op = if Token::Eq == cur {
+                CompareOp::Eq
+            } else {
+                CompareOp::NotEq
+            };
+
+            return Ok(Expr::Compare {
+                op,
+                left: Box::new(rel),
+                right: Box::new(self.parse_relational()?),
+            });
+        }
+
+        Ok(rel)
+    }
+
+    fn parse_relational(&mut self) -> Result<Expr, ParserError> {
+        let bit_or = self.parse_bitwise_or()?;
+
+        if self.match_tokens(&[Token::Le, Token::Lt, Token::Ge, Token::Gt]) {
+            let cur = self.advance().ok_or(ParserError::EOF)?;
+            let op = match cur {
+                Token::Lt => CompareOp::Lt,
+                Token::Le => CompareOp::Le,
+                Token::Ge => CompareOp::Ge,
+                Token::Gt => CompareOp::Gt,
+                _ => CompareOp::Gt,
+            };
+
+            return Ok(Expr::Compare {
+                op,
+                left: Box::new(bit_or),
+                right: Box::new(self.parse_bitwise_or()?),
+            });
+        }
+
+        Ok(bit_or)
+    }
+
+    fn parse_bitwise_or(&mut self) -> Result<Expr, ParserError> {
+        let xor = self.parse_bitwise_xor()?;
+
+        if self.check(&Token::BitOr) {
+            self.advance();
+            let right = self.parse_bitwise_xor()?;
+            return Ok(Expr::BinaryExpr {
+                left: Box::new(xor),
+                op: BinaryOp::BitOr,
+                right: Box::new(right),
+            });
+        }
+
+        Ok(xor)
+    }
+
+    fn parse_bitwise_xor(&mut self) -> Result<Expr, ParserError> {
+        let left = self.parse_bitwise_and()?;
+
+        if self.check(&Token::BitXor) {
+            self.advance();
+            let right = self.parse_bitwise_and()?;
+
+            return Ok(Expr::BinaryExpr {
+                left: Box::new(left),
+                op: BinaryOp::BitXor,
+                right: Box::new(right),
+            });
+        }
+
+        Ok(left)
+    }
+
+    fn parse_bitwise_and(&mut self) -> Result<Expr, ParserError> {
+        let left = self.parse_shift()?;
+
+        if self.check(&Token::BitAnd) {
+            self.advance();
+            let right = self.parse_shift()?;
+
+            return Ok(Expr::BinaryExpr {
+                left: Box::new(left),
+                op: BinaryOp::BitAnd,
+                right: Box::new(right),
+            });
+        }
+
+        Ok(left)
+    }
+
+    /// << and >>
+    fn parse_shift(&mut self) -> Result<Expr, ParserError> {
+        let left = self.parse_additive()?;
+
+        if self.match_tokens(&[Token::Shl, Token::Shr]) {
+            let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
+            let right = self.parse_additive()?;
+
+            let op = if cur == Token::Shl {
+                BinaryOp::Shl
+            } else {
+                BinaryOp::Shr
+            };
+
+            return Ok(Expr::BinaryExpr {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            });
+        }
+
+        Ok(left)
+    }
+
+    /// +, -
+    fn parse_additive(&mut self) -> Result<Expr, ParserError> {
+        let left = self.parse_multiplicative()?;
+
+        if self.match_tokens(&[Token::Plus, Token::Minus]) {
+            let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
+            let right = self.parse_multiplicative()?;
+
+            let op = if cur == Token::Plus {
+                BinaryOp::Plus
+            } else {
+                BinaryOp::Minus
+            };
+
+            return Ok(Expr::BinaryExpr {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            });
+        }
+
+        Ok(left)
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<Expr, ParserError> {
+        let left = self.parse_unary()?;
+
+        if self.match_tokens(&[Token::Mul, Token::Div, Token::FloorDiv, Token::Mod]) {
+            let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
+            let right = self.parse_unary()?;
+
+            let op = match cur {
+                Token::Mul => BinaryOp::Mul,
+                Token::Div => BinaryOp::Div,
+                Token::FloorDiv => BinaryOp::FloorDiv,
+                _ => BinaryOp::Mod,
+            };
+
+            return Ok(Expr::BinaryExpr {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            });
+        }
+
+        Ok(left)
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr, ParserError> {
+        if self.match_tokens(&[
+            Token::Plus,
+            Token::Minus,
+            Token::Kw(Keyword::Not),
+            Token::BitNot,
+        ]) {
+            let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
+            let right = self.parse_unary()?;
+            let op = match cur {
+                Token::Plus => UnaryOp::Plus,
+                Token::Minus => UnaryOp::Minus,
+                Token::Kw(Keyword::Not) => UnaryOp::Not,
+                _ => UnaryOp::BitNot,
+            };
+
+            return Ok(Expr::Unary {
+                op,
+                expr: Box::new(right),
+            });
+        }
+
+        self.parse_power()
+    }
+
+    /// **
+    fn parse_power(&mut self) -> Result<Expr, ParserError> {
+        let postfix = self.parse_postfix()?;
+        if self.check(&Token::Pow) {
+            self.advance();
+
+            return Ok(Expr::Power {
+                left: Box::new(postfix),
+                right: Box::new(self.parse_unary()?),
+            });
+        }
+        Ok(postfix)
+    }
+
+    fn parse_postfix(&mut self) -> Result<Expr, ParserError> {
+        let pri = self.parse_primary()?;
+        if self.check(&Token::LParen) {
+            self.advance();
+
+            let mut args = Vec::new();
+            while self.check(&Token::Comma) {
+                self.advance();
+
+                args.push(self.parse_expression()?);
+
+                if self.check(&Token::RParen) {
+                    self.advance();
+                    break;
+                }
+            }
+
+            return Ok(Expr::FuncCall {
+                fn_expr: Box::new(pri),
+                args,
+            });
+        } else if self.check(&Token::LBracket) {
+            self.advance();
+
+            let (start, end, step) = self.parse_slice()?;
+            return Ok(Expr::Slice {
+                name: Box::new(pri),
+                start,
+                end,
+                step,
+            });
+        } else if self.check(&Token::Dot) {
+            self.advance();
+            let attr = self.expect_ident()?;
+            return Ok(Expr::Attribute {
+                target: Box::new(pri),
+                field_name: attr,
+            });
+        }
+
+        Ok(pri)
+    }
+
+    fn parse_primary(&mut self) -> Result<Expr, ParserError> {
+        let t = self.advance().ok_or_else(|| ParserError::EOF)?;
+
+        match self.parse_literal(t.clone()) {
+            Ok(v) => Ok(v),
+            Err(_) => match t {
+                Token::Ident(id) => Ok(Expr::Ident(id)),
+                Token::LBracket => self.parse_list_literal(),
+                Token::LBrace => self.parse_dict_literal(),
+                Token::LParen => self.parse_tuple_or_grouped(),
+                _ => Err(ParserError::UnsupportToken(t)),
+            },
+        }
+    }
+
+    fn parse_slice(
+        &mut self,
+    ) -> Result<(Option<Box<Expr>>, Option<Box<Expr>>, Option<Box<Expr>>), ParserError> {
+        Ok((Some(Box::new(self.parse_expression()?)), None, None))
+    }
+
+    /// expr {"," expr}
+    fn parse_arg_list(&mut self) -> Result<Vec<Expr>, ParserError> {
+        let mut args = vec![self.parse_expression()?];
+        while self.check(&Token::Comma) {
+            self.advance();
+
+            args.push(self.parse_expression()?);
+        }
+
+        Ok(args)
+    }
+
+    /// ()
+    /// (expr, expr)
+    /// (expr)
+    /// `()` | `( expr )` | `( expr "," )` | `( expr "," expr { "," expr } )`
+    ///
+    /// Disambiguates grouped expressions from tuples using the
+    /// trailing-comma rule: `(x)` is just `x`, but `(x,)` is a
+    /// one-element tuple. `()` is the empty tuple.
+    fn parse_tuple_or_grouped(&mut self) -> Result<Expr, ParserError> {
+        // empty tuple: `()`
+        if self.check(&Token::RParen) {
+            self.advance();
+            return Ok(Expr::TupleLiteral(Vec::new()));
+        }
+
+        let first = self.parse_expression()?;
+
+        // grouped expression: `(expr)` -- no comma after the inner expr
+        if !self.check(&Token::Comma) {
+            self.consume(TokenType::RParen)?;
+            return Ok(first);
+        }
+
+        // tuple: at least one element already in `first`
+        let mut elements = vec![first];
+        while self.check(&Token::Comma) {
+            self.advance();
+            // allow trailing comma: `(a, b,)`
+            if self.check(&Token::RParen) {
+                break;
+            }
+            elements.push(self.parse_expression()?);
+        }
+        self.consume(TokenType::RParen)?;
+        Ok(Expr::TupleLiteral(elements))
+    }
+
+    /// `[ expr { "," expr } ]`
+    fn parse_list_literal(&mut self) -> Result<Expr, ParserError> {
+        let mut elements = Vec::new();
+        if !self.check(&Token::RBracket) {
+            elements.push(self.parse_expression()?);
+            while self.check(&Token::Comma) {
+                self.advance();
+
+                // allow trailing comma: `[a, b,]`
+                if self.check(&Token::RBracket) {
+                    break;
+                }
+                elements.push(self.parse_expression()?);
+            }
+        }
+
+        self.consume(TokenType::RBracket)?;
+        Ok(Expr::ListLiteral(elements))
+    }
+
+    /// `{ expr ":" expr { "," expr ":" expr } }`
+    fn parse_dict_literal(&mut self) -> Result<Expr, ParserError> {
+        let mut entries = Vec::new();
+        if !self.check(&Token::RBrace) {
+            let key = self.parse_expression()?;
+            self.consume(TokenType::Colon)?;
+            let value = self.parse_expression()?;
+
+            entries.push(DictEntry {
+                key: Box::new(key),
+                value: Box::new(value),
+            });
+
+            while self.check(&Token::Comma) {
+                self.advance();
+                // allow trailing comma: `{a: 1,}`
+                if self.check(&Token::RBrace) {
+                    break;
+                }
+
+                let key = self.parse_expression()?;
+                self.consume(TokenType::Colon)?;
+                let value = self.parse_expression()?;
+
+                entries.push(DictEntry {
+                    key: Box::new(key),
+                    value: Box::new(value),
+                });
+            }
+        }
+        self.consume(TokenType::RBrace)?;
+        Ok(Expr::DictLiteral(entries))
     }
 
     fn parse_literal(&mut self, t: Token) -> Result<Expr, ParserError> {
@@ -349,26 +853,16 @@ impl Parser {
     }
 
     fn consume(&mut self, token_type: TokenType) -> Result<Token, ParserError> {
-        let t = self.advance();
-        if t.is_none() {
-            return Err(ParserError::EOF);
+        let t = self.advance().ok_or_else(|| ParserError::EOF)?;
+        if t.token_type() != token_type {
+            return Err(ParserError::ExpectTokenType(token_type, t.token_type()));
         }
 
-        let tt = t.unwrap();
-        if tt.token_type() != token_type {
-            return Err(ParserError::ExpectTokenType(token_type, tt.token_type()));
-        }
-
-        Ok(tt)
+        Ok(t)
     }
 
     fn consume_oneof_types(&mut self, token_types: &[TokenType]) -> Result<Token, ParserError> {
-        let t = self.advance();
-        if t.is_none() {
-            return Err(ParserError::EOF);
-        }
-
-        let tt = t.unwrap();
+        let tt = self.advance().ok_or_else(|| ParserError::EOF)?;
         if !token_types.contains(&tt.token_type()) {
             return Err(ParserError::ExpectTokenType(
                 token_types[0],
@@ -379,11 +873,26 @@ impl Parser {
         Ok(tt)
     }
 
+    fn match_tokens(&self, tokens: &[Token]) -> bool {
+        match self.peek() {
+            Some(tk) => tokens.contains(&tk),
+            None => false,
+        }
+    }
+
     fn peek(&self) -> Option<Token> {
         if self.is_end() {
             None
         } else {
             Some(self.tokens[self.current].clone())
+        }
+    }
+
+    fn peek_next(&self) -> Option<Token> {
+        if self.current + 1 >= self.tokens.len() {
+            None
+        } else {
+            Some(self.tokens[self.current+1].clone())
         }
     }
 
@@ -404,7 +913,9 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{AssignOperator, AssignTarget, Expr, ImportName, LiteralExpr, Node, Program, Stmt},
+        ast::{
+            AssignOperator, AssignTarget, Block, Expr, ImportName, LiteralExpr, Node, Program, Stmt,
+        },
         lexer::Lexer,
         parser::Parser,
     };
@@ -598,5 +1109,31 @@ mod tests {
         let tokens = lexer.lex().expect("lex failed");
         let mut p = Parser::new(tokens);
         assert!(p.parse().is_err());
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let mut lexer = Lexer::new(
+            r#"def test() {
+            print("Hello");
+        }"#,
+        );
+        let tokens = lexer.lex().expect("lex failed");
+
+        println!("tokens: {:?}", tokens);
+
+        let mut p = Parser::new(tokens);
+
+        let program = p.parse().expect("parse failed");
+
+        let nodes: Vec<Node> = vec![Node::new(Stmt::Func {
+            name: "test".to_string(),
+            param_list: vec![],
+            body: Block(vec![Stmt::ExprStmt(Box::new(Expr::FuncCall {
+                fn_expr: Box::new(Expr::Ident("print".to_string())),
+                args: vec![Expr::Literal(LiteralExpr::Str("Hello".to_string()))],
+            }))]),
+        })];
+        assert_eq!(program, Program(nodes));
     }
 }

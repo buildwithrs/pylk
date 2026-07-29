@@ -1,3 +1,5 @@
+use crate::lexer::Token;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program(pub Vec<Node>);
 
@@ -120,6 +122,32 @@ pub enum AssignOperator {
     ShrAssign,
 }
 
+impl From<Token> for AssignOperator {
+    fn from(value: Token) -> Self {
+        match value {
+            Token::Assign => Self::Assign,
+            Token::PlusAssign => Self::PlusAssign,
+            Token::MinusAssign => Self::MinusAssign,
+            Token::MulAssign => Self::MulAssign,
+            Token::DivAssign => Self::DivAssign,
+            Token::ModAssign => Self::ModAssign,
+            Token::PowAssign => Self::PowAssign,
+            Token::FloorAssign => Self::FloorAssign,
+            Token::MatMulAssign => Self::MatMulAssign,
+            Token::BitAndAssign => Self::BitAndAssign,
+            Token::BitOrAssign => Self::BitOrAssign,
+            Token::BitXorAssign => Self::BitXorAssign,
+            Token::ShlAssign => Self::ShlAssign,
+            Token::ShrAssign => Self::ShrAssign,
+            // `:=` is conceptually an assignment; map it to plain Assign.
+            Token::Walrus => Self::Assign,
+            // Every other Token has no corresponding AssignOperator, so fall
+            // back to plain assignment rather than panic.
+            _ => Self::Assign,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
     Plus,
@@ -177,7 +205,10 @@ pub enum AssignTarget {
     Name(String),
     Tuple(Vec<String>),
     /// obj.x = 123
-    Attribute(String),
+    Attribute {
+        obj: String,
+        attr: String,
+    },
     /// a[i] = 1, b['x'] = 'y'
     Indx {
         name: String,
@@ -187,8 +218,8 @@ pub enum AssignTarget {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DictEntry {
-    key: Box<Expr>,
-    value: Box<Expr>,
+    pub key: Box<Expr>,
+    pub value: Box<Expr>,
 }
 
 /// Expr is the computation that return a value
@@ -255,9 +286,11 @@ pub enum Expr {
     DictLiteral(Vec<DictEntry>),
     TupleLiteral(Vec<Expr>),
     SetLiteral(Vec<Expr>),
+    Group(Box<Expr>),
+    
     /// a[1:6:2]
     Slice {
-        name: String,
+        name: Box<Expr>,
         start: Option<Box<Expr>>,
         end: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
