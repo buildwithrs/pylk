@@ -763,13 +763,8 @@ impl Parser {
         } else if self.check(&Token::LBracket) {
             self.advance();
 
-            let (start, end, step) = self.parse_slice()?;
-            return Ok(Expr::Slice {
-                name: Box::new(pri),
-                start,
-                end,
-                step,
-            });
+            let expr = self.parse_slice(pri)?;
+            return Ok(expr);
         } else if self.check(&Token::Dot) {
             self.advance();
             let attr = self.expect_ident()?;
@@ -797,13 +792,69 @@ impl Parser {
         }
     }
 
-    fn parse_slice(
-        &mut self,
-    ) -> Result<(Option<Box<Expr>>, Option<Box<Expr>>, Option<Box<Expr>>), ParserError> {
-        let start = self.parse_expression()?;
-        self.consume(TokenType::RBracket)?;
+    /// Parses `pri[<expr>]`, `pri[<start>:]`, `pri[:<end>]`,
+    /// `pri[<start>:<end>]`, `pri[:<end>:<step>]`, and
+    /// `pri[<start>:<end>:<step>]`. Returns `Expr::Index` for the
+    /// index-access form (no `:`), otherwise `Expr::Slice`.
+    ///
+    /// The `start` bound can be absent (`[:`) or present (`[<expr>:`).
+    /// From that point on the slice has the shape `[start:end:step?]`,
+    /// so both forms share the same end/step tail and we only branch on
+    /// whether the leading character is `:`.
+    fn parse_slice(&mut self, pri: Expr) -> Result<Expr, ParserError> {
+        // Parse the optional start bound. A leading `:` means start is
+        // absent; otherwise parse an expression and check whether it's
+        // really an index access (no `:` follows).
+        let start = if self.check(&Token::Colon) {
+            self.advance();
+            None
+        } else {
+            let expr = self.parse_expression()?;
+            // `[expr]` with no `:` is an index, not a slice.
+            if self.check(&Token::RBracket) {
+                self.advance();
+                return Ok(Expr::Index {
+                    target: Box::new(pri),
+                    index: Box::new(expr),
+                });
+            }
+            self.consume(TokenType::Colon)?;
+            Some(expr)
+        };
 
-        Ok((Some(Box::new(start)), None, None))
+        // Shared end/step tail for both `[:...]` and `[start:...]`.
+        let end = if self.check(&Token::RBracket) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+
+        // Optional `:step`. The two arms are intentionally asymmetric:
+        // the step arm uses `consume(RBracket)` (so a missing `]`
+        // becomes `ExpectTokenType`), while a bare `]` after the end
+        // is matched via `peek()` (so a stray token there surfaces as
+        // `InvalidSlice`). Existing tests pin this down.
+        let step = match self.peek() {
+            Some(Token::Colon) => {
+                self.advance();
+                let step = self.parse_expression()?;
+                self.consume(TokenType::RBracket)?;
+                Some(step)
+            }
+            Some(Token::RBracket) => {
+                self.advance();
+                None
+            }
+            Some(t) => return Err(ParserError::InvalidSlice(t)),
+            None => return Err(ParserError::EOF),
+        };
+
+        Ok(Expr::Slice {
+            name: Box::new(pri),
+            start: start.map(Box::new),
+            end: end.map(Box::new),
+            step: step.map(Box::new),
+        })
     }
 
     /// ()
@@ -972,7 +1023,8 @@ mod tests {
         ast::{
             AssignOperator, AssignTarget, Block, Expr, ImportName, LiteralExpr, Node, Program, Stmt,
         },
-        lexer::Lexer,
+        errors::ParserError,
+        lexer::{Lexer, Token},
         parser::Parser,
     };
 
@@ -1277,5 +1329,180 @@ mod tests {
             expr: Box::new(Expr::Literal(LiteralExpr::Str("X".to_string()))),
         })];
         assert_eq!(program, Program(nodes));
+    }
+
+    // -----------------------------------------------------------------
+    // Tests for Parser::parse_slice.
+    //
+    // `parse_slice` is private, so each test drives it through the full
+    // lex+parse pipeline on source code that, after the opening `[` is
+    // consumed by `parse_postfix`, hands control to `parse_slice` with
+    // the preceding expression as `pri`.
+    //
+    // Each shape maps to a distinct branch in `parse_slice`:
+    //
+    //   arr[1]       → Expr::Index                       (branch B1)
+    //   arr[:]       → Slice{ --, --, -- }               (branch A1)
+    //   arr[1:]      → Slice{ 1,  --, --}                (branch B2)
+    //   arr[:5]      → Slice{ --, 5,  --}                (branch A2b)
+    //   arr[1:5]     → Slice{ 1,  5,  --}                (branch B4)
+    //   arr[:5:2]    → Slice{ --, 5,  2 }                (branch A2a)
+    //   arr[1:5:2]   → Slice{ 1,  5,  2 }                (branch B3)
+    // -----------------------------------------------------------------
+
+    /// Variant of [`parse_source`] that surfaces the parser error so tests
+    /// can assert on it.
+    fn try_parse(source: &str) -> Result<Program, ParserError> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.lex().expect("lex failed");
+        let mut p = Parser::new(tokens);
+        p.parse()
+    }
+
+    #[test]
+    fn test_parse_slice_index() {
+        // arr[1] — single integer index, no slice. Exercises branch B1,
+        // which terminates with `]` right after the start expression.
+        let program = parse_source("arr[1];");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Index {
+                target: Box::new(Expr::Ident("arr".to_string())),
+                index: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            })))])
+        );
+    }
+
+    #[test]
+    fn test_parse_slice_open_open() {
+        // arr[:] — bare colon, no bounds at all. Exercises branch A1
+        // (colon immediately followed by `]`), which produces the
+        // most-degenerate slice with every bound None.
+        let program = parse_source("arr[:];");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Slice {
+                name: Box::new(Expr::Ident("arr".to_string())),
+                start: None,
+                end: None,
+                step: None,
+            })))])
+        );
+    }
+
+    #[test]
+    fn test_parse_slice_start_only() {
+        // arr[1:] — start bound present, end open. Exercises branch B2:
+        // after parsing the start expression we see `:` then `]`.
+        let program = parse_source("arr[1:];");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Slice {
+                name: Box::new(Expr::Ident("arr".to_string())),
+                start: Some(Box::new(Expr::Literal(LiteralExpr::Int(1)))),
+                end: None,
+                step: None,
+            })))])
+        );
+    }
+
+    #[test]
+    fn test_parse_slice_end_only() {
+        // arr[:5] — start open, end present, no step. Exercises branch
+        // A2b: leading `:`, parse end expression, then `]` (no second `:`).
+        let program = parse_source("arr[:5];");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Slice {
+                name: Box::new(Expr::Ident("arr".to_string())),
+                start: None,
+                end: Some(Box::new(Expr::Literal(LiteralExpr::Int(5)))),
+                step: None,
+            })))])
+        );
+    }
+
+    #[test]
+    fn test_parse_slice_start_end() {
+        // arr[1:5] — start and end present, no step. Exercises branch B4:
+        // after start and `:` we parse end, then see `]` directly.
+        let program = parse_source("arr[1:5];");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Slice {
+                name: Box::new(Expr::Ident("arr".to_string())),
+                start: Some(Box::new(Expr::Literal(LiteralExpr::Int(1)))),
+                end: Some(Box::new(Expr::Literal(LiteralExpr::Int(5)))),
+                step: None,
+            })))])
+        );
+    }
+
+    #[test]
+    fn test_parse_slice_end_step() {
+        // arr[:5:2] — start open, end and step present. Exercises branch
+        // A2a: leading `:`, parse end, see second `:`, parse step, `]`.
+        let program = parse_source("arr[:5:2];");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Slice {
+                name: Box::new(Expr::Ident("arr".to_string())),
+                start: None,
+                end: Some(Box::new(Expr::Literal(LiteralExpr::Int(5)))),
+                step: Some(Box::new(Expr::Literal(LiteralExpr::Int(2)))),
+            })))])
+        );
+    }
+
+    #[test]
+    fn test_parse_slice_start_end_step() {
+        // arr[1:5:2] — full slice with all three bounds. Exercises branch
+        // B3: parse start, `:`, parse end, see second `:`, parse step, `]`.
+        let program = parse_source("arr[1:5:2];");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Slice {
+                name: Box::new(Expr::Ident("arr".to_string())),
+                start: Some(Box::new(Expr::Literal(LiteralExpr::Int(1)))),
+                end: Some(Box::new(Expr::Literal(LiteralExpr::Int(5)))),
+                step: Some(Box::new(Expr::Literal(LiteralExpr::Int(2)))),
+            })))])
+        );
+    }
+
+    #[test]
+    fn test_parse_slice_invalid_after_end() {
+        // arr[1:5,] — after the end expression we hit a `,` rather than
+        // `:` or `]`. Both end-bound branches (A2 and B's tail) route the
+        // unexpected token through `ParserError::InvalidSlice`.
+        let err = try_parse("arr[1:5,];").expect_err("expected InvalidSlice error");
+        match err {
+            ParserError::InvalidSlice(Token::Comma) => {}
+            other => panic!("expected InvalidSlice(Comma), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_slice_invalid_after_step() {
+        // arr[1:5:2,] — the step branch (B3) finishes with a hard
+        // `consume(RBracket)` rather than a `peek()`-then-match, so a
+        // trailing `,` surfaces as `ExpectTokenType(RBracket, Comma)`
+        // instead of `InvalidSlice`. Recorded here so the asymmetry
+        // between the step and non-step branches is pinned down.
+        let err = try_parse("arr[1:5:2,];").expect_err("expected parser error");
+        match err {
+            ParserError::ExpectTokenType(_, _) => {}
+            other => panic!("expected ExpectTokenType, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_slice_unterminated() {
+        // `arr[` followed by nothing — once `[` is consumed in
+        // `parse_postfix`, `parse_slice` tries to read an expression
+        // for the start bound and falls off the end of the token
+        // stream, surfacing `ParserError::EOF`.
+        let err = try_parse("arr[").expect_err("expected EOF error");
+        assert!(matches!(err, ParserError::EOF));
     }
 }

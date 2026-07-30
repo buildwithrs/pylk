@@ -37,6 +37,9 @@ pub enum ParserError {
     #[error("no assign target")]
     NoAssignTarget,
 
+    #[error("invalid slice: {0}")]
+    InvalidSlice(Token),
+
     #[error("unsupport: {0}")]
     UnsupportToken(Token),
 
