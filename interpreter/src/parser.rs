@@ -802,7 +802,7 @@ impl Parser {
     ) -> Result<(Option<Box<Expr>>, Option<Box<Expr>>, Option<Box<Expr>>), ParserError> {
         let start = self.parse_expression()?;
         self.consume(TokenType::RBracket)?;
-        
+
         Ok((Some(Box::new(start)), None, None))
     }
 
@@ -1271,7 +1271,7 @@ mod tests {
         let nodes: Vec<Node> = vec![Node::new(Stmt::Assign {
             target: AssignTarget::Index {
                 object: Box::new(Expr::Ident("arr".to_string())),
-                index: Box::new(Expr::Literal(LiteralExpr::Float(0.0))),
+                index: Box::new(Expr::Literal(LiteralExpr::Int(0))),
             },
             op: AssignOperator::Assign,
             expr: Box::new(Expr::Literal(LiteralExpr::Str("X".to_string()))),

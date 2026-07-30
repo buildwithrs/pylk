@@ -532,8 +532,11 @@ impl Lexer {
             self.advance();
         }
 
+        let mut is_float = false;
+
         // 2. scan all digits after decimal point
         if self.peek() == Some('.') {
+            is_float = true;
             self.advance();
 
             while self.peek().is_some_and(|d| d.is_ascii_digit()) {
@@ -562,10 +565,17 @@ impl Lexer {
         }
 
         let num_text = String::from_iter(&self.chars[self.start..self.current]);
+        if is_float {
+            let num = num_text
+                .parse::<f64>()
+                .map_err(|e| LexerError::InvalidNumber(e.to_string()))?;
+            return Ok(Token::Float(num));
+        }
+
         let num = num_text
-            .parse::<f64>()
+            .parse::<i64>()
             .map_err(|e| LexerError::InvalidNumber(e.to_string()))?;
-        Ok(Token::Float(num))
+        Ok(Token::Int(num))
     }
 
     fn parse_identifier(&mut self) -> Result<Token, LexerError> {
