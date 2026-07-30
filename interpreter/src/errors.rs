@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::lexer::{Token, TokenType};
+use crate::{ast::Expr, lexer::{Token, TokenType}};
 
 #[derive(Debug, Error)]
 pub enum LexerError {
@@ -30,6 +30,9 @@ pub enum ParserError {
 
     #[error("invalid assign target: {0}")]
     InvalidAssignTarget(Token),
+
+    #[error("invalid assign target: {0}")]
+    InvalidAssignTarget1(String),
 
     #[error("no assign target")]
     NoAssignTarget,

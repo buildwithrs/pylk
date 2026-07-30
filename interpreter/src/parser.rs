@@ -58,27 +58,22 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParserError> {
-        if let Some(cur) = self.peek() {
-            match cur {
-                Token::Kw(Keyword::Import) => self.parse_import(),
-                Token::Kw(Keyword::From) => self.parse_from_import(),
-                Token::Kw(Keyword::Class) => self.parse_class(),
-                Token::Kw(Keyword::Def) => self.parse_function(),
-                Token::Kw(Keyword::If) => self.parse_if(),
-                Token::Kw(Keyword::While) => self.parse_while(),
-                Token::Kw(Keyword::For) => self.parse_for(),
-                Token::Kw(Keyword::Return) => self.parse_return(),
-                Token::Kw(Keyword::Pass) => Ok(Stmt::Pass),
-                Token::Kw(Keyword::Break) => Ok(Stmt::Break),
-                Token::Kw(Keyword::Continue) => Ok(Stmt::Continue),
-                Token::LBrace => Ok(Stmt::Block(self.parse_block()?)),
-                _ => {
-                    let exp = self.parse_expression()?;
-                    Ok(Stmt::ExprStmt(Box::new(exp)))
-                }
-            }
-        } else {
-            Err(ParserError::EOF)
+        let cur = self.peek().ok_or_else(|| ParserError::EOF)?;
+
+        match cur {
+            Token::Kw(Keyword::Import) => self.parse_import(),
+            Token::Kw(Keyword::From) => self.parse_from_import(),
+            Token::Kw(Keyword::Class) => self.parse_class(),
+            Token::Kw(Keyword::Def) => self.parse_function(),
+            Token::Kw(Keyword::If) => self.parse_if(),
+            Token::Kw(Keyword::While) => self.parse_while(),
+            Token::Kw(Keyword::For) => self.parse_for(),
+            Token::Kw(Keyword::Return) => self.parse_return(),
+            Token::Kw(Keyword::Pass) => Ok(Stmt::Pass),
+            Token::Kw(Keyword::Break) => Ok(Stmt::Break),
+            Token::Kw(Keyword::Continue) => Ok(Stmt::Continue),
+            Token::LBrace => Ok(Stmt::Block(self.parse_block()?)),
+            _ => self.parse_assignment_stmt(),
         }
     }
 
@@ -362,7 +357,87 @@ impl Parser {
     }
 
     fn parse_assignment_stmt(&mut self) -> Result<Stmt, ParserError> {
-        todo!()
+        println!("parsing assignment...");
+
+        let assign_target = self.parse_expression()?;
+        println!("parsing assignment, assign_target: {}", assign_target);
+
+        if !self.is_end() {
+            let next = self.peek().ok_or_else(|| ParserError::EOF)?;
+            if Self::is_assign_op(&next) {
+                self.advance();
+
+                let op = AssignOperator::from(next);
+                match assign_target {
+                    Expr::Attribute { target, field_name } => {
+                        return Ok(Stmt::Assign {
+                            target: AssignTarget::Attribute {
+                                object: target,
+                                field: field_name,
+                            },
+                            op,
+                            expr: Box::new(self.parse_expression()?),
+                        });
+                    }
+                    Expr::Ident(x) => {
+                        return Ok(Stmt::Assign {
+                            target: AssignTarget::Name(x),
+                            op,
+                            expr: Box::new(self.parse_expression()?),
+                        });
+                    }
+
+                    Expr::Slice { name, start, .. } => {
+                        return Ok(Stmt::Assign {
+                            target: AssignTarget::Index {
+                                object: name,
+                                index: start.unwrap(),
+                            },
+                            op,
+                            expr: Box::new(self.parse_expression()?),
+                        });
+                    }
+
+                    Expr::TupleLiteral(args) => {
+                        if args.len() == 0 {
+                            return Err(ParserError::InvalidAssignTarget1(
+                                "no tuple args".to_string(),
+                            ));
+                        }
+
+                        let mut tuple_args = vec![];
+                        for arg in args {
+                            match arg {
+                                Expr::Ident(x) => {
+                                    tuple_args.push(x);
+                                }
+                                _ => {
+                                    return Err(ParserError::InvalidAssignTarget1(
+                                        "tuple arg is not ident".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+
+                        return Ok(Stmt::Assign {
+                            target: AssignTarget::Tuple(tuple_args),
+                            op,
+                            expr: Box::new(self.parse_expression()?),
+                        });
+                    }
+                    _ => {
+                        return Err(ParserError::InvalidAssignTarget1(format!(
+                            "unsupported assign target: {}",
+                            assign_target
+                        )));
+                    }
+                }
+            } else {
+                return Ok(Stmt::ExprStmt(Box::new(assign_target)));
+            }
+        }
+
+        Ok(Stmt::ExprStmt(Box::new(assign_target)))
     }
 
     // x = expression
@@ -406,60 +481,12 @@ impl Parser {
         })
     }
 
-    /*
-    x           plain identifier
-     x.y         attribute (single level)
-     x[i]        index  (single level, index only - not slice)
-     (a, b, c)   tuple destructure (identifiers only)
-    */
-
-    fn parse_assign_target(&mut self) -> Result<AssignTarget, ParserError> {
-        match self.peek() {
-            Some(Token::Ident(name)) => {
-                self.advance();
-                match self.peek() {
-                    Some(Token::Dot) => {
-                        self.advance();
-                        let attr = self.expect_ident()?;
-                        Ok(AssignTarget::Attribute {
-                            object: Expr::Ident(name),
-                            field: attr,
-                        })
-                    }
-
-                    Some(Token::LBracket) => {
-                        self.advance();
-                        let index = self.parse_expression()?;
-                        self.consume(TokenType::RBracket)?;
-                        Ok(AssignTarget::Index {
-                            object: Expr::Ident(name),
-                            index: index,
-                        })
-                    }
-
-                    _ => Ok(AssignTarget::Name(name)),
-                }
-            }
-            Some(Token::LParen) => {
-                // (a, b, c) =
-                self.advance();
-
-                let mut names = vec![self.expect_ident()?];
-                while self.check(&Token::Comma) {
-                    self.advance();
-                    names.push(self.expect_ident()?);
-                }
-
-                self.consume(TokenType::RBrace)?;
-                Ok(AssignTarget::Tuple(names))
-            }
-            Some(other) => Err(ParserError::InvalidAssignTarget(other)),
-            None => Err(ParserError::NoAssignTarget),
-        }
-    }
-
     fn parse_ternary_expr(&mut self) -> Result<Expr, ParserError> {
+        println!("parsing ternary...");
+
         let logical_or = self.parse_logical_or()?;
+
+        println!("logical_or: {}", logical_or);
 
         if self.check(&Token::Kw(Keyword::If)) {
             self.advance();
@@ -678,18 +705,12 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParserError> {
-        if self.match_tokens(&[
-            Token::Plus,
-            Token::Minus,
-            Token::Kw(Keyword::Not),
-            Token::BitNot,
-        ]) {
+        if self.match_tokens(&[Token::Plus, Token::Minus, Token::BitNot]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
             let right = self.parse_unary()?;
             let op = match cur {
                 Token::Plus => UnaryOp::Plus,
                 Token::Minus => UnaryOp::Minus,
-                Token::Kw(Keyword::Not) => UnaryOp::Not,
                 _ => UnaryOp::BitNot,
             };
 
@@ -718,20 +739,22 @@ impl Parser {
 
     fn parse_postfix(&mut self) -> Result<Expr, ParserError> {
         let pri = self.parse_primary()?;
+
         if self.check(&Token::LParen) {
             self.advance();
 
             let mut args = Vec::new();
-            while self.check(&Token::Comma) {
-                self.advance();
-
-                args.push(self.parse_expression()?);
-
+            loop {
                 if self.check(&Token::RParen) {
-                    self.advance();
                     break;
                 }
+
+                args.push(self.parse_expression()?);
+                if self.check(&Token::Comma) {
+                    self.advance();
+                }
             }
+            self.consume(TokenType::RParen)?;
 
             return Ok(Expr::FuncCall {
                 fn_expr: Box::new(pri),
@@ -777,19 +800,10 @@ impl Parser {
     fn parse_slice(
         &mut self,
     ) -> Result<(Option<Box<Expr>>, Option<Box<Expr>>, Option<Box<Expr>>), ParserError> {
-        Ok((Some(Box::new(self.parse_expression()?)), None, None))
-    }
-
-    /// expr {"," expr}
-    fn parse_arg_list(&mut self) -> Result<Vec<Expr>, ParserError> {
-        let mut args = vec![self.parse_expression()?];
-        while self.check(&Token::Comma) {
-            self.advance();
-
-            args.push(self.parse_expression()?);
-        }
-
-        Ok(args)
+        let start = self.parse_expression()?;
+        self.consume(TokenType::RBracket)?;
+        
+        Ok((Some(Box::new(start)), None, None))
     }
 
     /// ()
@@ -955,7 +969,9 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{AssignOperator, Block, Expr, ImportName, LiteralExpr, Node, Program, Stmt},
+        ast::{
+            AssignOperator, AssignTarget, Block, Expr, ImportName, LiteralExpr, Node, Program, Stmt,
+        },
         lexer::Lexer,
         parser::Parser,
     };
@@ -1173,6 +1189,92 @@ mod tests {
                 fn_expr: Box::new(Expr::Ident("print".to_string())),
                 args: vec![Expr::Literal(LiteralExpr::Str("Hello".to_string()))],
             }))]),
+        })];
+        assert_eq!(program, Program(nodes));
+    }
+
+    #[test]
+    fn test_parse_call() {
+        let mut lexer = Lexer::new(r#"nice(123);"#);
+        let tokens = lexer.lex().expect("lex failed");
+
+        println!("tokens: {:?}", tokens);
+
+        let mut p = Parser::new(tokens);
+        let program = p.parse().expect("parse failed");
+        let nodes: Vec<Node> = vec![Node::new(Stmt::ExprStmt(Box::new(Expr::FuncCall {
+            fn_expr: Box::new(Expr::Ident("nice".to_string())),
+            args: vec![Expr::Literal(LiteralExpr::Float(123.0))],
+        })))];
+        assert_eq!(program, Program(nodes));
+    }
+
+    #[test]
+    fn test_parse_attribute() {
+        let mut lexer = Lexer::new(r#"image.width;"#);
+        let tokens = lexer.lex().expect("lex failed");
+
+        println!("tokens: {:?}", tokens);
+
+        let mut p = Parser::new(tokens);
+        let program = p.parse().expect("parse failed");
+        let nodes: Vec<Node> = vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Attribute {
+            target: Box::new(Expr::Ident("image".to_string())),
+            field_name: "width".to_string(),
+        })))];
+        assert_eq!(program, Program(nodes));
+    }
+
+    #[test]
+    fn test_parse_assign1() {
+        let mut lexer = Lexer::new(r#"x=123;"#);
+        let tokens = lexer.lex().expect("lex failed");
+        println!("tokens: {:?}", tokens);
+
+        let mut p = Parser::new(tokens);
+        let program = p.parse().expect("parse failed");
+        let nodes: Vec<Node> = vec![Node::new(Stmt::Assign {
+            target: AssignTarget::Name("x".to_string()),
+            op: AssignOperator::Assign,
+            expr: Box::new(Expr::Literal(LiteralExpr::Float(123.0))),
+        })];
+        assert_eq!(program, Program(nodes));
+    }
+
+    #[test]
+    fn test_parse_assign2() {
+        let mut lexer = Lexer::new(r#"x.y=123;"#);
+        let tokens = lexer.lex().expect("lex failed");
+        println!("tokens: {:?}", tokens);
+
+        let mut p = Parser::new(tokens);
+        let program = p.parse().expect("parse failed");
+        let nodes: Vec<Node> = vec![Node::new(Stmt::Assign {
+            target: AssignTarget::Attribute {
+                object: Box::new(Expr::Ident("x".to_string())),
+                field: "y".to_string(),
+            },
+            op: AssignOperator::Assign,
+            expr: Box::new(Expr::Literal(LiteralExpr::Float(123.0))),
+        })];
+        assert_eq!(program, Program(nodes));
+    }
+
+    #[test]
+    fn test_parse_assign3() {
+        let mut lexer = Lexer::new(r#"arr[0]='X';"#);
+        let tokens = lexer.lex().expect("lex failed");
+        println!("tokens: {:?}", tokens);
+
+        let mut p = Parser::new(tokens);
+        let program = p.parse().expect("parse failed");
+        let nodes: Vec<Node> = vec![Node::new(Stmt::Assign {
+            target: AssignTarget::Index {
+                object: Box::new(Expr::Ident("arr".to_string())),
+                index: Box::new(Expr::Literal(LiteralExpr::Float(0.0))),
+            },
+            op: AssignOperator::Assign,
+            expr: Box::new(Expr::Literal(LiteralExpr::Str("X".to_string()))),
         })];
         assert_eq!(program, Program(nodes));
     }

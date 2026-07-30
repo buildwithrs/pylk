@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::lexer::Token;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,11 +43,18 @@ pub struct ImportName {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block(pub Vec<Stmt>);
 
+
+/*
+    x           plain identifier
+     x.y         attribute (single level)
+     x[i]        index  (single level, index only - not slice)
+     (a, b, c)   tuple destructure (identifiers only)
+*/
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssignTarget {
     Name(String),
-    Attribute { object: Expr, field: String },
-    Index { object: Expr, index: Expr },
+    Attribute { object: Box<Expr>, field: String },
+    Index { object: Box<Expr>, index: Box<Expr> },
     Tuple(Vec<String>), // identifiers only
 }
 
@@ -194,7 +203,6 @@ pub enum UnaryOp {
     Plus,   // +
     Minus,  // -
     BitNot, // ~
-    Not,    // not
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -299,4 +307,10 @@ pub enum Expr {
         end: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
     },
+}
+
+impl Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
