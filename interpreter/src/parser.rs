@@ -522,11 +522,11 @@ impl Parser {
     }
 
     fn parse_logical_and(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_equality()?;
+        let left = self.parse_not_expr()?;
         if self.check(&Token::Kw(Keyword::And)) {
             self.advance();
 
-            let right = self.parse_equality()?;
+            let right = self.parse_not_expr()?;
             return Ok(Expr::Logical {
                 op: LogicalOp::And,
                 left: Box::new(left),
@@ -537,34 +537,30 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_equality(&mut self) -> Result<Expr, ParserError> {
-        let rel = self.parse_relational()?;
-        if self.check(&Token::Eq) || self.check(&Token::Ne) {
+    fn parse_not_expr(&mut self) -> Result<Expr, ParserError> {
+        if self.check(&Token::Kw(Keyword::Not)) {
             self.advance();
-
-            let cur = self.peek().ok_or(ParserError::EOF)?;
-            let op = if Token::Eq == cur {
-                CompareOp::Eq
-            } else {
-                CompareOp::NotEq
-            };
-
-            return Ok(Expr::Compare {
-                op,
-                left: Box::new(rel),
-                right: Box::new(self.parse_relational()?),
-            });
+            Ok(Expr::LogicalNot(Box::new(self.parse_not_expr()?)))
+        } else {
+            self.parse_comparison()
         }
-
-        Ok(rel)
     }
 
-    fn parse_relational(&mut self) -> Result<Expr, ParserError> {
+    fn parse_comparison(&mut self) -> Result<Expr, ParserError> {
         let bit_or = self.parse_bitwise_or()?;
 
-        if self.match_tokens(&[Token::Le, Token::Lt, Token::Ge, Token::Gt]) {
+        if self.match_tokens(&[
+            Token::Eq,
+            Token::Ne,
+            Token::Le,
+            Token::Lt,
+            Token::Ge,
+            Token::Gt,
+        ]) {
             let cur = self.advance().ok_or(ParserError::EOF)?;
             let op = match cur {
+                Token::Eq => CompareOp::Eq,
+                Token::Ne => CompareOp::NotEq,
                 Token::Lt => CompareOp::Lt,
                 Token::Le => CompareOp::Le,
                 Token::Ge => CompareOp::Ge,

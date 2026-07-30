@@ -209,6 +209,7 @@ pub enum UnaryOp {
 pub enum LogicalOp {
     And,
     Or,
+    Not,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -277,6 +278,7 @@ pub enum Expr {
         op: UnaryOp,
         expr: Box<Expr>,
     },
+    LogicalNot(Box<Expr>),
     Power {
         left: Box<Expr>,
         right: Box<Expr>,

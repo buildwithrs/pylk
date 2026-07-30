@@ -201,7 +201,7 @@ bitwise_and     = shift { "&" shift } ;
 shift           = additive { ( "<<" | ">>" ) additive } ;
 
 additive        = multiplicative { ( "+" | "-" ) multiplicative } ;
-multiplicative  = unary { ( "*" | "/" | "//" | "%" | "@" ) unary } ;
+multiplicative  = unary { ( "*" | "/" | "//" | "%" ) unary } ;
 
 unary           = ( "-" | "+" | "~" ) unary | power ;
 power           = postfix [ "**" unary ] ;
