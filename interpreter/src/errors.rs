@@ -28,6 +28,12 @@ pub enum ParserError {
     #[error("token is not identifier")]
     NotIdent,
 
+    #[error("invalid assign target: {0}")]
+    InvalidAssignTarget(Token),
+
+    #[error("no assign target")]
+    NoAssignTarget,
+
     #[error("unsupport: {0}")]
     UnsupportToken(Token),
 

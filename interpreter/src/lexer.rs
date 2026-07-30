@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{ast::LiteralExpr, errors::LexerError};
+use crate::errors::LexerError;
 
 pub const KW: &[&str] = &[
     "None", "and", "as", "break", "class", "continue", "def", "del", "elif", "else", "for", "from",
@@ -122,7 +122,6 @@ pub enum Token {
     BitXorAssign, // ^=
     ShlAssign,    // <<=
     ShrAssign,    // >>=
-    Walrus,       // :=
 
     LParen,   // (
     RParen,   // )
@@ -191,7 +190,6 @@ pub enum TokenType {
     BitXorAssign,
     ShlAssign,
     ShrAssign,
-    Walrus,
 
     LParen,
     RParen,
@@ -222,12 +220,8 @@ impl Display for TokenType {
     }
 }
 
-
 pub fn assign_tokens() -> Vec<Token> {
-    vec![
-        Token::Assign,
-        Token::PlusAssign,
-    ]
+    vec![Token::Assign, Token::PlusAssign]
 }
 
 impl Token {
@@ -285,7 +279,6 @@ impl Token {
             Token::BitXorAssign => TokenType::BitXorAssign,
             Token::ShlAssign => TokenType::ShlAssign,
             Token::ShrAssign => TokenType::ShrAssign,
-            Token::Walrus => TokenType::Walrus,
 
             Token::LParen => TokenType::LParen,
             Token::RParen => TokenType::RParen,

@@ -52,8 +52,11 @@ statement_list  = { statement } ;
 (*  expression position it is a *dict* or *set literal*; the      *)
 (*  parser disambiguates by syntactic context.                  *)
 (*                                                                *)
-(*  Variables are introduced by plain assignment expressions     *)
+(*  Variables are introduced by plain assignment *statements*    *)
 (*  (`x = 5;`) — Python-style, no `let` / `const` keyword.       *)
+(*                                                                *)
+(*  Assignment is a *statement* in Python — it produces no value   *)
+(*  and may NOT appear inside another expression.                 *)
 (* ------------------------------------------------------------ *)
 
 statement       = import_stmt
@@ -65,6 +68,7 @@ statement       = import_stmt
                 | return_stmt
                 | break_stmt
                 | continue_stmt
+                | assignment_stmt
                 | expr_stmt
                 | block
                 ;
@@ -76,24 +80,7 @@ block           = "{" statement_list "}" ;
 (*  Declarations                                                 *)
 (* ============================================================ *)
 
-(* Two forms, sharing the dotted-name tail:
-
-     import a.b.c;           import a.b.c as x;
-     from a.b.c import d;
-     from a.b.c import d, e as f;
-     from a.b.c import *;
-
-   `*` is represented in the AST as a single ImportName whose `name`
-   field is the literal string "*" — matching CPython's convention. *)
-
-import_stmt     = ( "import" dotted_name [ "as" identifier ]
-                  | "from"  dotted_name "import" import_names
-                  ) ";" ;
-
-dotted_name     = identifier { "." identifier } ;
-import_names    = "*"
-                | import_name { "," import_name } ;
-import_name     = identifier [ "as" identifier ] ;
+import_stmt     = "import" identifier { "." identifier } [ "as" identifier ] ";" ;
 
 func_decl       = "def" identifier "(" [ param_list ] ")" [ return_annot ] block ;
 return_annot    = "->" type_expr ;
@@ -105,7 +92,7 @@ parameter       = identifier [ ":" type_expr ] [ "=" expression ] ;
    syntax. A class declares a name and a body of members only.         *)
 
 class_decl      = "class" identifier "{" { class_member } "}" ;
-class_member    = func_decl | expr_stmt ;
+class_member    = func_decl | assignment_stmt | expr_stmt ;
 
 
 (* ============================================================ *)
@@ -124,6 +111,42 @@ return_stmt     = "return" [ expression ] ";" ;
 break_stmt      = "break" ";" ;
 continue_stmt   = "continue" ";" ;
 
+(* ------------------------------------------------------------ *)
+(*  Assignment                                                   *)
+(*                                                                *)
+(*  Assignment is a *statement*, NOT an expression. It has no    *)
+(*  value and cannot be embedded inside another expression       *)
+(*  (e.g. `y = (x = 5)` is a SyntaxError).                        *)
+(*                                                                *)
+(*  The right-hand side of any assignment is a plain `expression` *)
+(*  only - it cannot be another `assignment_stmt`. This means    *)
+(*  chained assignment `a = b = 5` is rejected by the parser,    *)
+(*  matching how most other languages (JS, C, Rust, Java) treat   *)
+(*  assignment rather than how Python's grammar handles chains.  *)
+(*                                                                *)
+(*  Augmented assignments (+=, -=, *=, /=, //=, %=, **=, @=,     *)
+(*  &=, |=, ^=, <<=, >>=) are also statements.                   *)
+(*                                                                *)
+(*  Supported LHS (assign_target) shapes:                        *)
+(*     x           plain identifier                              *)
+(*     x.y         attribute (single level)                      *)
+(*     x[i]        index  (single level, index only - not slice) *)
+(*     (a, b, c)   tuple destructure (identifiers only)          *)
+(* ------------------------------------------------------------ *)
+
+assign_target   = identifier
+                | identifier "." identifier
+                | identifier "[" expression "]"
+                | "(" identifier { "," identifier } ")"
+                ;
+
+assignment_stmt = assign_target assign_op expression ;
+
+assign_op       = "="
+                | "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "@="
+                | "&=" | "|=" | "^=" | "<<=" | ">>="
+                ;
+
 expr_stmt       = expression ";" ;
 
 
@@ -135,47 +158,42 @@ expr_stmt       = expression ";" ;
 (*    2.  ternary          a if cond else b                        *)
 (*    3.  logical-or       or                                      *)
 (*    4.  logical-and      and                                     *)
-(*    5.  equality         == !=                                   *)
-(*    6.  relational       <  <=  >  >=                            *)
+(*    5.  logical-not      not                                     *)
+(*    6.  comparison       == !=  < <=  > >=  in  not in  is  is not  *)
 (*    7.  bitwise-or       |                                       *)
 (*    8.  bitwise-xor      ^                                       *)
 (*    9.  bitwise-and      &                                       *)
 (*   10.  shift            << >>                                   *)
 (*   11.  additive         +  -                                    *)
 (*   12.  multiplicative   *  /  //  %  @                          *)
-(*   13.  unary            -  +  not  ~                            *)
+(*   13.  unary            -  +  ~                                 *)
 (*   14.  power            **  (right-associative)                 *)
 (*   15.  postfix          ()  []  .  [:]                          *)
 (*   16.  primary                                                 *)
 (* ============================================================ *)
 
-expression      = lambda_expr | assignment ;
+(* Note: assignment is a *statement* (see the Assignment section  *)
+(* above) and is NOT part of the expression grammar. It cannot be   *)
+(* used inside another expression. Only `lambda_expr` and          *)
+(* `ternary_expr` (which subsumes everything below it) are the    *)
+(* top-level expression shapes.                                     *)
 
-(* Assignment target - supported shapes (mirrors AST AssignTarget):
-     x           plain identifier
-     x.y         attribute (single level)
-     x[i]        index  (single level, index only - not slice)
-     (a, b, c)   tuple destructure (identifiers only)                  *)
-assign_target   = identifier
-                | identifier "." identifier
-                | identifier "[" expression "]"
-                | "(" identifier { "," identifier } ")"
-                ;
-
-assignment      = assign_target assign_op assignment | ternary_expr ;
-
-assign_op       = "="
-                | "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "@="
-                | "&=" | "|=" | "^=" | "<<=" | ">>="
-                ;
+expression      = lambda_expr | ternary_expr ;
 
 ternary_expr    = logical_or [ "if" logical_or "else" expression ] ;
 
 logical_or      = logical_and { "or" logical_and } ;
-logical_and     = equality { "and" equality } ;
+logical_and     = not_expr { "and" not_expr } ;
 
-equality        = relational { ( "==" | "!=" ) relational } ;
-relational      = bitwise_or { ( "<" | "<=" | ">" | ">=" ) bitwise_or } ;
+not_expr        = "not" not_expr | comparison ;
+
+comparison      = bitwise_or { comp_op bitwise_or } ;
+comp_op         = "==" | "!=" | "<" | "<=" | ">" | ">="
+                | "in"
+                | "not" "in"
+                | "is"
+                | "is" "not"
+                ;
 
 bitwise_or      = bitwise_xor { "|" bitwise_xor } ;
 bitwise_xor     = bitwise_and { "^" bitwise_and } ;
@@ -185,7 +203,7 @@ shift           = additive { ( "<<" | ">>" ) additive } ;
 additive        = multiplicative { ( "+" | "-" ) multiplicative } ;
 multiplicative  = unary { ( "*" | "/" | "//" | "%" | "@" ) unary } ;
 
-unary           = ( "-" | "+" | "not" | "~" ) unary | power ;
+unary           = ( "-" | "+" | "~" ) unary | power ;
 power           = postfix [ "**" unary ] ;
 
 postfix         = primary { postfix_op } ;

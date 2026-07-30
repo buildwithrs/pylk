@@ -41,6 +41,28 @@ pub struct ImportName {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block(pub Vec<Stmt>);
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignTarget {
+    Name(String),
+    Attribute { object: Expr, field: String },
+    Index { object: Expr, index: Expr },
+    Tuple(Vec<String>), // identifiers only
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Func {
+    name: String,
+    param_list: Vec<Parameter>,
+    body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMember {
+    FuncDecl(Stmt),
+    Assign(Stmt),
+    ExprStmt(Expr),
+}
+
 /// Stmt is the action that control the flow of program
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
@@ -53,7 +75,7 @@ pub enum Stmt {
     },
     Class {
         name: String,
-        members: Vec<Stmt>, // Vec<Funcs | ExprStmt>
+        members: Vec<ClassMember>, // Vec<Funcs | ExprStmt>
     },
 
     /// import a.b.c as x
@@ -94,6 +116,12 @@ pub enum Stmt {
         loop_var: String,
         iter_expr: Box<Expr>,
         body: Block,
+    },
+
+    Assign {
+        target: AssignTarget,
+        op: AssignOperator,
+        expr: Box<Expr>,
     },
 
     Return {
@@ -139,8 +167,6 @@ impl From<Token> for AssignOperator {
             Token::BitXorAssign => Self::BitXorAssign,
             Token::ShlAssign => Self::ShlAssign,
             Token::ShrAssign => Self::ShrAssign,
-            // `:=` is conceptually an assignment; map it to plain Assign.
-            Token::Walrus => Self::Assign,
             // Every other Token has no corresponding AssignOperator, so fall
             // back to plain assignment rather than panic.
             _ => Self::Assign,
@@ -201,22 +227,6 @@ pub enum LiteralExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum AssignTarget {
-    Name(String),
-    Tuple(Vec<String>),
-    /// obj.x = 123
-    Attribute {
-        obj: String,
-        attr: String,
-    },
-    /// a[i] = 1, b['x'] = 'y'
-    Indx {
-        name: String,
-        idx: Box<Expr>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct DictEntry {
     pub key: Box<Expr>,
     pub value: Box<Expr>,
@@ -228,12 +238,6 @@ pub enum Expr {
     Lambda {
         param_list: Vec<String>,
         expression: Box<Expr>,
-    },
-
-    Assign {
-        target: AssignTarget,
-        op: AssignOperator,
-        expr: Box<Expr>,
     },
     Attribute {
         target: Box<Expr>,
@@ -287,7 +291,7 @@ pub enum Expr {
     TupleLiteral(Vec<Expr>),
     SetLiteral(Vec<Expr>),
     Group(Box<Expr>),
-    
+
     /// a[1:6:2]
     Slice {
         name: Box<Expr>,
