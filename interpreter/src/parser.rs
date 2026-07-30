@@ -72,7 +72,20 @@ impl Parser {
             Token::Kw(Keyword::Pass) => Ok(Stmt::Pass),
             Token::Kw(Keyword::Break) => Ok(Stmt::Break),
             Token::Kw(Keyword::Continue) => Ok(Stmt::Continue),
-            Token::LBrace => Ok(Stmt::Block(self.parse_block()?)),
+            Token::LBrace => {
+                // `{` can start a block or a dict literal expression
+                // statement. Per the grammar note, we disambiguate by
+                // trying the dict path first; if it doesn't parse as a
+                // dict entry, fall back to block.
+                let saved = self.current;
+                match self.try_parse_dict_literal_at_stmt() {
+                    Ok(expr) => Ok(Stmt::ExprStmt(Box::new(expr))),
+                    Err(_) => {
+                        self.current = saved;
+                        Ok(Stmt::Block(self.parse_block()?))
+                    }
+                }
+            }
             _ => self.parse_assignment_stmt(),
         }
     }
@@ -167,7 +180,7 @@ impl Parser {
     fn expect_token(&mut self, expect_t: Token) -> Result<Token, ParserError> {
         match self.advance() {
             Some(t) => {
-                if t != expect_t {
+                if t == expect_t {
                     Ok(t)
                 } else {
                     Err(ParserError::ExpectToken(expect_t, t))
@@ -505,33 +518,35 @@ impl Parser {
         Ok(logical_or)
     }
 
+    /// `or`   (left-associative)
     fn parse_logical_or(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_logical_and()?;
-        if self.check(&Token::Kw(Keyword::Or)) {
+        let mut left = self.parse_logical_and()?;
+        while self.check(&Token::Kw(Keyword::Or)) {
             self.advance();
 
             let right = self.parse_logical_and()?;
-            return Ok(Expr::Logical {
+            left = Expr::Logical {
                 op: LogicalOp::Or,
                 left: Box::new(left),
                 right: Box::new(right),
-            });
+            };
         }
 
         Ok(left)
     }
 
+    /// `and`   (left-associative)
     fn parse_logical_and(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_not_expr()?;
-        if self.check(&Token::Kw(Keyword::And)) {
+        let mut left = self.parse_not_expr()?;
+        while self.check(&Token::Kw(Keyword::And)) {
             self.advance();
 
             let right = self.parse_not_expr()?;
-            return Ok(Expr::Logical {
+            left = Expr::Logical {
                 op: LogicalOp::And,
                 left: Box::new(left),
                 right: Box::new(right),
-            });
+            };
         }
 
         Ok(left)
@@ -578,61 +593,64 @@ impl Parser {
         Ok(bit_or)
     }
 
+    /// |   (left-associative)
     fn parse_bitwise_or(&mut self) -> Result<Expr, ParserError> {
-        let xor = self.parse_bitwise_xor()?;
+        let mut left = self.parse_bitwise_xor()?;
 
-        if self.check(&Token::BitOr) {
+        while self.check(&Token::BitOr) {
             self.advance();
             let right = self.parse_bitwise_xor()?;
-            return Ok(Expr::BinaryExpr {
-                left: Box::new(xor),
+            left = Expr::BinaryExpr {
+                left: Box::new(left),
                 op: BinaryOp::BitOr,
                 right: Box::new(right),
-            });
+            };
         }
 
-        Ok(xor)
+        Ok(left)
     }
 
+    /// ^   (left-associative)
     fn parse_bitwise_xor(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_bitwise_and()?;
+        let mut left = self.parse_bitwise_and()?;
 
-        if self.check(&Token::BitXor) {
+        while self.check(&Token::BitXor) {
             self.advance();
             let right = self.parse_bitwise_and()?;
 
-            return Ok(Expr::BinaryExpr {
+            left = Expr::BinaryExpr {
                 left: Box::new(left),
                 op: BinaryOp::BitXor,
                 right: Box::new(right),
-            });
+            };
         }
 
         Ok(left)
     }
 
+    /// &   (left-associative)
     fn parse_bitwise_and(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_shift()?;
+        let mut left = self.parse_shift()?;
 
-        if self.check(&Token::BitAnd) {
+        while self.check(&Token::BitAnd) {
             self.advance();
             let right = self.parse_shift()?;
 
-            return Ok(Expr::BinaryExpr {
+            left = Expr::BinaryExpr {
                 left: Box::new(left),
                 op: BinaryOp::BitAnd,
                 right: Box::new(right),
-            });
+            };
         }
 
         Ok(left)
     }
 
-    /// << and >>
+    /// << and >>   (left-associative)
     fn parse_shift(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_additive()?;
+        let mut left = self.parse_additive()?;
 
-        if self.match_tokens(&[Token::Shl, Token::Shr]) {
+        while self.match_tokens(&[Token::Shl, Token::Shr]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
             let right = self.parse_additive()?;
 
@@ -642,21 +660,21 @@ impl Parser {
                 BinaryOp::Shr
             };
 
-            return Ok(Expr::BinaryExpr {
+            left = Expr::BinaryExpr {
                 left: Box::new(left),
                 op,
                 right: Box::new(right),
-            });
+            };
         }
 
         Ok(left)
     }
 
-    /// +, -
+    /// +, -   (left-associative)
     fn parse_additive(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_multiplicative()?;
+        let mut left = self.parse_multiplicative()?;
 
-        if self.match_tokens(&[Token::Plus, Token::Minus]) {
+        while self.match_tokens(&[Token::Plus, Token::Minus]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
             let right = self.parse_multiplicative()?;
 
@@ -666,20 +684,21 @@ impl Parser {
                 BinaryOp::Minus
             };
 
-            return Ok(Expr::BinaryExpr {
+            left = Expr::BinaryExpr {
                 left: Box::new(left),
                 op,
                 right: Box::new(right),
-            });
+            };
         }
 
         Ok(left)
     }
 
+    /// *, /, //, %   (left-associative)
     fn parse_multiplicative(&mut self) -> Result<Expr, ParserError> {
-        let left = self.parse_unary()?;
+        let mut left = self.parse_unary()?;
 
-        if self.match_tokens(&[Token::Mul, Token::Div, Token::FloorDiv, Token::Mod]) {
+        while self.match_tokens(&[Token::Mul, Token::Div, Token::FloorDiv, Token::Mod]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
             let right = self.parse_unary()?;
 
@@ -690,11 +709,11 @@ impl Parser {
                 _ => BinaryOp::Mod,
             };
 
-            return Ok(Expr::BinaryExpr {
+            left = Expr::BinaryExpr {
                 left: Box::new(left),
                 op,
                 right: Box::new(right),
-            });
+            };
         }
 
         Ok(left)
@@ -944,6 +963,58 @@ impl Parser {
         Ok(Expr::DictLiteral(entries))
     }
 
+    /// Attempts to parse a `{ ... }` at statement position as a dict
+    /// literal expression statement. Returns `Err` if the contents are
+    /// not shaped like a dict entry, signalling the caller to fall
+    /// back to block parsing.
+    ///
+    /// Per the grammar, an empty `{}` is an empty dict literal (the
+    /// grammar notes "empty set has no literal form"). Otherwise we
+    /// require the first inner expression to be followed by `:`, so
+    /// blocks like `{x; y;}` are left untouched.
+    fn try_parse_dict_literal_at_stmt(&mut self) -> Result<Expr, ParserError> {
+        self.consume(TokenType::LBrace)?;
+
+        // `{}` → empty dict.
+        if self.check(&Token::RBrace) {
+            self.advance();
+            return Ok(Expr::DictLiteral(Vec::new()));
+        }
+
+        // Parse the first key expression. If the next token isn't `:`,
+        // this is a block, not a dict.
+        let key = self.parse_expression()?;
+        if !self.check(&Token::Colon) {
+            return Err(ParserError::UnsupportToken(
+                self.peek().unwrap_or(Token::Eof),
+            ));
+        }
+        self.advance();
+
+        let value = self.parse_expression()?;
+        let mut entries = vec![DictEntry {
+            key: Box::new(key),
+            value: Box::new(value),
+        }];
+
+        while self.check(&Token::Comma) {
+            self.advance();
+            if self.check(&Token::RBrace) {
+                break;
+            }
+
+            let key = self.parse_expression()?;
+            self.consume(TokenType::Colon)?;
+            let value = self.parse_expression()?;
+            entries.push(DictEntry {
+                key: Box::new(key),
+                value: Box::new(value),
+            });
+        }
+        self.consume(TokenType::RBrace)?;
+        Ok(Expr::DictLiteral(entries))
+    }
+
     fn parse_literal(&mut self, t: Token) -> Result<Expr, ParserError> {
         match t {
             Token::Str(s) => Ok(Expr::Literal(LiteralExpr::Str(s))),
@@ -1017,7 +1088,8 @@ impl Parser {
 mod tests {
     use crate::{
         ast::{
-            AssignOperator, AssignTarget, Block, Expr, ImportName, LiteralExpr, Node, Program, Stmt,
+            AssignOperator, AssignTarget, BinaryOp, Block, CompareOp, Expr, ImportName, LiteralExpr,
+            LogicalOp, Node, Program, Stmt, UnaryOp,
         },
         errors::ParserError,
         lexer::{Lexer, Token},
@@ -1500,5 +1572,549 @@ mod tests {
         // stream, surfacing `ParserError::EOF`.
         let err = try_parse("arr[").expect_err("expected EOF error");
         assert!(matches!(err, ParserError::EOF));
+    }
+
+    // -----------------------------------------------------------------
+    // Expression tests.
+    //
+    // Each test lexes + parses a single `expr;` statement and unwraps
+    // the inner `Expr` from the resulting `Stmt::ExprStmt`. This keeps
+    // the assertions focused on the expression grammar and avoids
+    // depending on any other statement-level machinery.
+    //
+    // Helper: pull the inner Expr out of a single-stmt program that
+    // is expected to be `expr;`. Panics if the program has any other
+    // shape — these helpers are only used on known-good inputs.
+    // -----------------------------------------------------------------
+
+    fn expr_of(source: &str) -> Expr {
+        let program = parse_source(source);
+        let mut nodes = program.0;
+        assert_eq!(nodes.len(), 1, "expected exactly one node");
+        match nodes.pop().unwrap().stmt {
+            Stmt::ExprStmt(e) => *e,
+            other => panic!("expected ExprStmt, got {:?}", other),
+        }
+    }
+
+    // -- arithmetic --------------------------------------------------
+
+    #[test]
+    fn test_expr_add() {
+        assert_eq!(
+            expr_of("1 + 2;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                op: BinaryOp::Plus,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_sub() {
+        assert_eq!(
+            expr_of("1 - 2;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                op: BinaryOp::Minus,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_mul() {
+        assert_eq!(
+            expr_of("3 * 4;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+                op: BinaryOp::Mul,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(4))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_div() {
+        assert_eq!(
+            expr_of("8 / 2;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(8))),
+                op: BinaryOp::Div,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_floor_div() {
+        assert_eq!(
+            expr_of("7 // 2;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(7))),
+                op: BinaryOp::FloorDiv,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_mod() {
+        assert_eq!(
+            expr_of("7 % 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(7))),
+                op: BinaryOp::Mod,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    // -- unary -------------------------------------------------------
+
+    #[test]
+    fn test_expr_unary_minus() {
+        assert_eq!(
+            expr_of("-1;"),
+            Expr::Unary {
+                op: UnaryOp::Minus,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_unary_plus() {
+        assert_eq!(
+            expr_of("+1;"),
+            Expr::Unary {
+                op: UnaryOp::Plus,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_unary_bitnot() {
+        assert_eq!(
+            expr_of("~5;"),
+            Expr::Unary {
+                op: UnaryOp::BitNot,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(5))),
+            }
+        );
+    }
+
+    // -- power -------------------------------------------------------
+
+    #[test]
+    fn test_expr_power() {
+        assert_eq!(
+            expr_of("2 ** 3;"),
+            Expr::Power {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    // -- bitwise -----------------------------------------------------
+
+    #[test]
+    fn test_expr_bitand() {
+        assert_eq!(
+            expr_of("5 & 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(5))),
+                op: BinaryOp::BitAnd,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_bitor() {
+        assert_eq!(
+            expr_of("5 | 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(5))),
+                op: BinaryOp::BitOr,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_bitxor() {
+        assert_eq!(
+            expr_of("5 ^ 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(5))),
+                op: BinaryOp::BitXor,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    // -- shift -------------------------------------------------------
+
+    #[test]
+    fn test_expr_shl() {
+        assert_eq!(
+            expr_of("1 << 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                op: BinaryOp::Shl,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_shr() {
+        assert_eq!(
+            expr_of("8 >> 1;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(8))),
+                op: BinaryOp::Shr,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }
+        );
+    }
+
+    // -- comparison --------------------------------------------------
+
+    #[test]
+    fn test_expr_eq() {
+        assert_eq!(
+            expr_of("1 == 1;"),
+            Expr::Compare {
+                op: CompareOp::Eq,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_ne() {
+        assert_eq!(
+            expr_of("1 != 2;"),
+            Expr::Compare {
+                op: CompareOp::NotEq,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_lt() {
+        assert_eq!(
+            expr_of("1 < 2;"),
+            Expr::Compare {
+                op: CompareOp::Lt,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_le() {
+        assert_eq!(
+            expr_of("1 <= 2;"),
+            Expr::Compare {
+                op: CompareOp::Le,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_gt() {
+        assert_eq!(
+            expr_of("3 > 2;"),
+            Expr::Compare {
+                op: CompareOp::Gt,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_ge() {
+        assert_eq!(
+            expr_of("3 >= 2;"),
+            Expr::Compare {
+                op: CompareOp::Ge,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    // -- logical -----------------------------------------------------
+
+    #[test]
+    fn test_expr_and() {
+        assert_eq!(
+            expr_of("True and False;"),
+            Expr::Logical {
+                op: LogicalOp::And,
+                left: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                right: Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_or() {
+        assert_eq!(
+            expr_of("True or False;"),
+            Expr::Logical {
+                op: LogicalOp::Or,
+                left: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                right: Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_not() {
+        assert_eq!(
+            expr_of("not True;"),
+            Expr::LogicalNot(Box::new(Expr::Literal(LiteralExpr::Boolean(true))))
+        );
+    }
+
+    #[test]
+    fn test_expr_double_not() {
+        // `not not x` should produce nested LogicalNot nodes — the
+        // grammar rule is `"not" not_expr`, so a second `not`
+        // recurses rather than producing something flat.
+        assert_eq!(
+            expr_of("not not True;"),
+            Expr::LogicalNot(Box::new(Expr::LogicalNot(Box::new(Expr::Literal(
+                LiteralExpr::Boolean(true)
+            )))))
+        );
+    }
+
+    // -- ternary -----------------------------------------------------
+
+    #[test]
+    fn test_expr_ternary() {
+        assert_eq!(
+            expr_of("1 if True else 2;"),
+            Expr::Ternary {
+                true_expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                test: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                else_expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    // -- lambda ------------------------------------------------------
+
+    #[test]
+    fn test_expr_lambda_single_param() {
+        assert_eq!(
+            expr_of("lambda x: x + 1;"),
+            Expr::Lambda {
+                param_list: vec!["x".to_string()],
+                expression: Box::new(Expr::BinaryExpr {
+                    left: Box::new(Expr::Ident("x".to_string())),
+                    op: BinaryOp::Plus,
+                    right: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_lambda_multi_params() {
+        assert_eq!(
+            expr_of("lambda a, b: a * b;"),
+            Expr::Lambda {
+                param_list: vec!["a".to_string(), "b".to_string()],
+                expression: Box::new(Expr::BinaryExpr {
+                    left: Box::new(Expr::Ident("a".to_string())),
+                    op: BinaryOp::Mul,
+                    right: Box::new(Expr::Ident("b".to_string())),
+                }),
+            }
+        );
+    }
+
+    // -- grouping ----------------------------------------------------
+
+    #[test]
+    fn test_expr_grouped() {
+        // `(1 + 2)` is just `1 + 2` — the parser flattens a single
+        // parenthesized expression via `parse_tuple_or_grouped`.
+        assert_eq!(
+            expr_of("(1 + 2);"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                op: BinaryOp::Plus,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            }
+        );
+    }
+
+    // -- literals ----------------------------------------------------
+
+    #[test]
+    fn test_expr_list_literal() {
+        assert_eq!(
+            expr_of("[1, 2, 3];"),
+            Expr::ListLiteral(vec![
+                Expr::Literal(LiteralExpr::Int(1)),
+                Expr::Literal(LiteralExpr::Int(2)),
+                Expr::Literal(LiteralExpr::Int(3)),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_expr_tuple_literal() {
+        assert_eq!(
+            expr_of("(1, 2);"),
+            Expr::TupleLiteral(vec![
+                Expr::Literal(LiteralExpr::Int(1)),
+                Expr::Literal(LiteralExpr::Int(2)),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_literal() {
+        assert_eq!(
+            expr_of(r#"{"a": 1};"#),
+            Expr::DictLiteral(vec![crate::ast::DictEntry {
+                key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }])
+        );
+    }
+
+    // -- precedence & associativity ----------------------------------
+
+    #[test]
+    fn test_expr_precedence_mul_over_add() {
+        // `*` binds tighter than `+` → `1 + (2 * 3)`.
+        assert_eq!(
+            expr_of("1 + 2 * 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                op: BinaryOp::Plus,
+                right: Box::new(Expr::BinaryExpr {
+                    left: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                    op: BinaryOp::Mul,
+                    right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_left_assoc_sub() {
+        // `-` is left-associative → `(1 - 2) - 3`.
+        assert_eq!(
+            expr_of("1 - 2 - 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::BinaryExpr {
+                    left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                    op: BinaryOp::Minus,
+                    right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                }),
+                op: BinaryOp::Minus,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_power_right_assoc() {
+        // `**` is right-associative → `2 ** (3 ** 2)`.
+        assert_eq!(
+            expr_of("2 ** 3 ** 2;"),
+            Expr::Power {
+                left: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                right: Box::new(Expr::Power {
+                    left: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+                    right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_unary_binds_tighter_than_binary() {
+        // `-2 + 3` → `(-2) + 3`.
+        assert_eq!(
+            expr_of("-2 + 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Unary {
+                    op: UnaryOp::Minus,
+                    expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                }),
+                op: BinaryOp::Plus,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_comparison_binds_looser_than_arith() {
+        // `1 + 2 == 3` → `(1 + 2) == 3`.
+        assert_eq!(
+            expr_of("1 + 2 == 3;"),
+            Expr::Compare {
+                op: CompareOp::Eq,
+                left: Box::new(Expr::BinaryExpr {
+                    left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                    op: BinaryOp::Plus,
+                    right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                }),
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_not_binds_looser_than_comparison() {
+        // In Python `not` is between `and` and comparisons, so
+        // `1 == 1 or 2 == 2` first becomes `(1 == 1) or (2 == 2)`,
+        // and `not True == False` parses as `not (True == False)`.
+        assert_eq!(
+            expr_of("not True == False;"),
+            Expr::LogicalNot(Box::new(Expr::Compare {
+                op: CompareOp::Eq,
+                left: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                right: Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_expr_and_binds_tighter_than_or() {
+        // `a or b and c` → `a or (b and c)`.
+        assert_eq!(
+            expr_of("True or False and False;"),
+            Expr::Logical {
+                op: LogicalOp::Or,
+                left: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                right: Box::new(Expr::Logical {
+                    op: LogicalOp::And,
+                    left: Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+                    right: Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+                }),
+            }
+        );
     }
 }
