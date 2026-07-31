@@ -29,7 +29,6 @@ impl Parser {
                 | Token::FloorAssign
                 | Token::ModAssign
                 | Token::PowAssign
-                | Token::MatMulAssign
                 | Token::BitAndAssign
                 | Token::BitOrAssign
                 | Token::BitXorAssign
@@ -229,7 +228,8 @@ impl Parser {
                         if let Token::Ident(name) = nt {
                             let next = self.peek_next().ok_or_else(|| ParserError::EOF)?;
                             if Self::is_assign_op(&next) {
-                                Ok(ClassMember::Assign(self.parse_simple_assign()?))
+                                self.advance();
+                                Ok(ClassMember::Assign(self.parse_simple_assign(name, next)?))
                             } else {
                                 Ok(ClassMember::ExprStmt(self.parse_expression()?))
                             }
@@ -266,12 +266,12 @@ impl Parser {
                     name,
                     default: None,
                 });
-                if !self.check(&Token::Comma) {
-                    break;
+
+                if self.check(&Token::Comma) {
+                    self.advance();
                 }
 
-                self.advance();
-                if !self.check(&Token::RParen) {
+                if self.check(&Token::RParen) {
                     break;
                 }
             }
@@ -370,10 +370,7 @@ impl Parser {
     }
 
     fn parse_assignment_stmt(&mut self) -> Result<Stmt, ParserError> {
-        println!("parsing assignment...");
-
         let assign_target = self.parse_expression()?;
-        println!("parsing assignment, assign_target: {}", assign_target);
 
         if !self.is_end() {
             let next = self.peek().ok_or_else(|| ParserError::EOF)?;
@@ -400,11 +397,11 @@ impl Parser {
                         });
                     }
 
-                    Expr::Slice { name, start, .. } => {
+                    Expr::Index { target, index } => {
                         return Ok(Stmt::Assign {
                             target: AssignTarget::Index {
-                                object: name,
-                                index: start.unwrap(),
+                                object: target,
+                                index,
                             },
                             op,
                             expr: Box::new(self.parse_expression()?),
@@ -454,14 +451,13 @@ impl Parser {
     }
 
     // x = expression
-    fn parse_simple_assign(&mut self) -> Result<Stmt, ParserError> {
-        let ident = self.expect_ident()?;
-        let op = AssignOperator::from(self.expect_assigns()?);
+    fn parse_simple_assign(&mut self, name: String, op: Token) -> Result<Stmt, ParserError> {
+        let op = AssignOperator::from(op);
         let value = self.parse_expression()?;
 
         self.advance();
         Ok(Stmt::Assign {
-            target: AssignTarget::Name(ident),
+            target: AssignTarget::Name(name),
             op,
             expr: Box::new(value),
         })
@@ -495,11 +491,7 @@ impl Parser {
     }
 
     fn parse_ternary_expr(&mut self) -> Result<Expr, ParserError> {
-        println!("parsing ternary...");
-
         let logical_or = self.parse_logical_or()?;
-
-        println!("logical_or: {}", logical_or);
 
         if self.check(&Token::Kw(Keyword::If)) {
             self.advance();
@@ -770,6 +762,9 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RParen)?;
+            if self.check(&Token::Semi) {
+                self.advance();
+            }
 
             return Ok(Expr::FuncCall {
                 fn_expr: Box::new(pri),
@@ -1005,6 +1000,7 @@ impl Parser {
 
             let key = self.parse_expression()?;
             self.consume(TokenType::Colon)?;
+
             let value = self.parse_expression()?;
             entries.push(DictEntry {
                 key: Box::new(key),
@@ -1088,8 +1084,8 @@ impl Parser {
 mod tests {
     use crate::{
         ast::{
-            AssignOperator, AssignTarget, BinaryOp, Block, CompareOp, Expr, ImportName, LiteralExpr,
-            LogicalOp, Node, Program, Stmt, UnaryOp,
+            AssignOperator, AssignTarget, BinaryOp, Block, CompareOp, Expr, ImportName,
+            LiteralExpr, LogicalOp, Node, Program, Stmt, UnaryOp,
         },
         errors::ParserError,
         lexer::{Lexer, Token},
@@ -1157,7 +1153,7 @@ mod tests {
         // let nodes = vec![Node::new(Stmt::ExprStmt(Box::new(Expr::Assign {
         //     target: AssignTarget::Name("x".to_string()),
         //     op: AssignOperator::Assign,
-        //     expr: Box::new(Expr::Literal(LiteralExpr::Float(123.0))),
+        //     expr: Box::new(Expr::Literal(LiteralExpr::Int(123))),
         // })))];
         // assert_eq!(program, Program(nodes));
     }
@@ -1324,7 +1320,7 @@ mod tests {
         let program = p.parse().expect("parse failed");
         let nodes: Vec<Node> = vec![Node::new(Stmt::ExprStmt(Box::new(Expr::FuncCall {
             fn_expr: Box::new(Expr::Ident("nice".to_string())),
-            args: vec![Expr::Literal(LiteralExpr::Float(123.0))],
+            args: vec![Expr::Literal(LiteralExpr::Int(123))],
         })))];
         assert_eq!(program, Program(nodes));
     }
@@ -1356,7 +1352,7 @@ mod tests {
         let nodes: Vec<Node> = vec![Node::new(Stmt::Assign {
             target: AssignTarget::Name("x".to_string()),
             op: AssignOperator::Assign,
-            expr: Box::new(Expr::Literal(LiteralExpr::Float(123.0))),
+            expr: Box::new(Expr::Literal(LiteralExpr::Int(123))),
         })];
         assert_eq!(program, Program(nodes));
     }
@@ -1375,7 +1371,7 @@ mod tests {
                 field: "y".to_string(),
             },
             op: AssignOperator::Assign,
-            expr: Box::new(Expr::Literal(LiteralExpr::Float(123.0))),
+            expr: Box::new(Expr::Literal(LiteralExpr::Int(123))),
         })];
         assert_eq!(program, Program(nodes));
     }

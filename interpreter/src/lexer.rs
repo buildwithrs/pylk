@@ -83,7 +83,6 @@ pub enum Token {
     Float(f64),
     Bool(bool), // True, False
     Str(String),
-    Ellipsis,
 
     Plus,     // +
     Minus,    // -
@@ -92,7 +91,6 @@ pub enum Token {
     Div,      // /
     FloorDiv, // //
     Mod,      // %
-    MatMul,   // @
     Shl,      // <<
     Shr,      // >>
     BitAnd,   // &
@@ -116,7 +114,6 @@ pub enum Token {
     FloorAssign,  // //=
     ModAssign,    // %=
     PowAssign,    // **=
-    MatMulAssign, // @=
     BitAndAssign, // &=
     BitOrAssign,  // |=
     BitXorAssign, // ^=
@@ -152,7 +149,6 @@ pub enum TokenType {
     Float,
     Bool,
     Str,
-    Ellipsis,
 
     Plus,
     Minus,
@@ -161,7 +157,6 @@ pub enum TokenType {
     Div,
     FloorDiv,
     Mod,
-    MatMul,
     Shl,
     Shr,
     BitAnd,
@@ -184,7 +179,6 @@ pub enum TokenType {
     FloorAssign,
     ModAssign,
     PowAssign,
-    MatMulAssign,
     BitAndAssign,
     BitOrAssign,
     BitXorAssign,
@@ -241,7 +235,6 @@ impl Token {
             Token::Float(_) => TokenType::Float,
             Token::Bool(_) => TokenType::Bool,
             Token::Str(_) => TokenType::Str,
-            Token::Ellipsis => TokenType::Ellipsis,
 
             Token::Plus => TokenType::Plus,
             Token::Minus => TokenType::Minus,
@@ -250,7 +243,6 @@ impl Token {
             Token::Div => TokenType::Div,
             Token::FloorDiv => TokenType::FloorDiv,
             Token::Mod => TokenType::Mod,
-            Token::MatMul => TokenType::MatMul,
             Token::Shl => TokenType::Shl,
             Token::Shr => TokenType::Shr,
             Token::BitAnd => TokenType::BitAnd,
@@ -273,7 +265,6 @@ impl Token {
             Token::FloorAssign => TokenType::FloorAssign,
             Token::ModAssign => TokenType::ModAssign,
             Token::PowAssign => TokenType::PowAssign,
-            Token::MatMulAssign => TokenType::MatMulAssign,
             Token::BitAndAssign => TokenType::BitAndAssign,
             Token::BitOrAssign => TokenType::BitOrAssign,
             Token::BitXorAssign => TokenType::BitXorAssign,
@@ -346,16 +337,24 @@ impl Lexer {
                 '{' => Ok(Token::LBrace),
                 '}' => Ok(Token::RBrace),
                 '.' => {
-                    if let Some(ch) = self.peek() {
-                        if ch.is_ascii_digit() {
-                            return self.parse_number();
-                        }
+                    if self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                        return self.parse_number(true);
                     }
-                    return Ok(Token::Dot);
+                    Ok(Token::Dot)
                 }
                 ',' => Ok(Token::Comma),
                 ':' => Ok(Token::Colon),
                 ';' => Ok(Token::Semi),
+                '#' => {
+                    // skip line comment
+                    while let Some(ch) = self.peek() {
+                        if ch == '\n' {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    Ok(Token::WhiteSpace)
+                }
                 '&' => {
                     if self.is_match('=') {
                         self.advance();
@@ -417,12 +416,17 @@ impl Lexer {
                     }
                 }
                 '/' => {
-                    if self.is_match('=') {
+                    if self.is_match('/') {
+                        self.advance();
+                        if self.is_match('=') {
+                            self.advance();
+                            Ok(Token::FloorAssign)
+                        } else {
+                            Ok(Token::FloorDiv)
+                        }
+                    } else if self.is_match('=') {
                         self.advance();
                         Ok(Token::DivAssign)
-                    } else if self.is_match('/') {
-                        self.advance();
-                        Ok(Token::FloorDiv)
                     } else {
                         Ok(Token::Div)
                     }
@@ -446,7 +450,12 @@ impl Lexer {
                 '<' => {
                     if self.is_match('<') {
                         self.advance();
-                        Ok(Token::Shl)
+                        if self.is_match('=') {
+                            self.advance();
+                            Ok(Token::ShlAssign)
+                        } else {
+                            Ok(Token::Shl)
+                        }
                     } else if self.is_match('=') {
                         self.advance();
                         Ok(Token::Le)
@@ -457,7 +466,12 @@ impl Lexer {
                 '>' => {
                     if self.is_match('>') {
                         self.advance();
-                        Ok(Token::Shr)
+                        if self.is_match('=') {
+                            self.advance();
+                            Ok(Token::ShrAssign)
+                        } else {
+                            Ok(Token::Shr)
+                        }
                     } else if self.is_match('=') {
                         self.advance();
                         Ok(Token::Ge)
@@ -477,7 +491,7 @@ impl Lexer {
                     if ch.is_alphabetic() || ch.eq(&'_') {
                         return self.parse_identifier();
                     } else if ch.is_digit(10) {
-                        return self.parse_number();
+                        return self.parse_number(false);
                     } else if ch == '\'' || ch == '"' {
                         return self.parse_string(ch);
                     }
@@ -526,16 +540,16 @@ impl Lexer {
     1.25e-3
     1_000.25
     */
-    fn parse_number(&mut self) -> Result<Token, LexerError> {
+    fn parse_number(&mut self, start_with_dot: bool) -> Result<Token, LexerError> {
+        let mut is_float = start_with_dot;
+
         // 1. scan digit before decimal point
         while self.peek().is_some_and(|d| d.is_ascii_digit()) {
             self.advance();
         }
 
-        let mut is_float = false;
-
         // 2. scan all digits after decimal point
-        if self.peek() == Some('.') {
+        if !start_with_dot && self.peek() == Some('.') {
             is_float = true;
             self.advance();
 
@@ -546,6 +560,7 @@ impl Lexer {
 
         // 3. scan the exponent
         if matches!(self.peek(), Some('e' | 'E')) {
+            is_float = true;
             self.advance();
 
             if matches!(self.peek(), Some('+' | '-')) {
@@ -647,7 +662,7 @@ pub fn is_keyword(ident: &str) -> bool {
 mod tests {
     use crate::{
         errors::LexerError,
-        lexer::{Keyword, Lexer, Token, TokenType},
+        lexer::{KW, Keyword, Lexer, Token, TokenType, assign_tokens, is_keyword},
     };
 
     fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
@@ -669,11 +684,11 @@ mod tests {
             vec![
                 Token::Ident("a".to_string()),
                 Token::Assign,
-                Token::Float(1.0),
+                Token::Int(1),
                 Token::Semi,
                 Token::Ident("b".to_string()),
                 Token::Assign,
-                Token::Float(2.0),
+                Token::Int(2),
                 Token::Semi,
                 Token::Ident("c".to_string()),
                 Token::Assign,
@@ -704,11 +719,11 @@ mod tests {
             vec![
                 Token::Ident("a".to_string()),
                 Token::Assign,
-                Token::Float(1.0),
+                Token::Int(1),
                 Token::Semi,
                 Token::Ident("b".to_string()),
                 Token::Assign,
-                Token::Float(2.0),
+                Token::Int(2),
                 Token::Semi,
                 Token::Ident("c".to_string()),
                 Token::Assign,
@@ -848,7 +863,7 @@ mod tests {
         assert_eq!(
             lex("0 3.14 .5 5. 1e6 1.25e-3").unwrap(),
             vec![
-                Token::Float(0.0),
+                Token::Int(0),
                 Token::Float(3.14),
                 Token::Float(0.5),
                 Token::Float(5.0),
@@ -856,6 +871,13 @@ mod tests {
                 Token::Float(1.25e-3),
             ]
         );
+    }
+
+    #[test]
+    fn test_lexer_numbers1() {
+        let num = ".5";
+        let n = num.parse::<f64>();
+        println!("n: {:?}", n);
     }
 
     #[test]
@@ -926,5 +948,333 @@ mod tests {
             Token::Error("boom".to_string()).token_type(),
             TokenType::Error,
         );
+    }
+    // -----------------------------------------------------------------
+    // Additional tests covering token cases not exercised above.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_lexer_integer_literals() {
+        assert_eq!(
+            lex("0 7 42 12345 -3 -42").unwrap(),
+            vec![
+                Token::Int(0),
+                Token::Int(7),
+                Token::Int(42),
+                Token::Int(12345),
+                // `-` is its own token; the literal `-3` is `-` followed by `3`.
+                Token::Minus,
+                Token::Int(3),
+                Token::Minus,
+                Token::Int(42),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_remaining_keywords() {
+        assert_eq!(
+            lex(
+                "and as break class continue def del elif for from global import \
+                 in is lambda nonlocal not or pass return"
+            )
+            .unwrap(),
+            vec![
+                Token::Kw(Keyword::And),
+                Token::Kw(Keyword::As),
+                Token::Kw(Keyword::Break),
+                Token::Kw(Keyword::Class),
+                Token::Kw(Keyword::Continue),
+                Token::Kw(Keyword::Def),
+                Token::Kw(Keyword::Del),
+                Token::Kw(Keyword::Elif),
+                Token::Kw(Keyword::For),
+                Token::Kw(Keyword::From),
+                Token::Kw(Keyword::Global),
+                Token::Kw(Keyword::Import),
+                Token::Kw(Keyword::In),
+                Token::Kw(Keyword::Is),
+                Token::Kw(Keyword::Lambda),
+                Token::Kw(Keyword::Nonlocal),
+                Token::Kw(Keyword::Not),
+                Token::Kw(Keyword::Or),
+                Token::Kw(Keyword::Pass),
+                Token::Kw(Keyword::Return),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lexer_compound_assign_operators() {
+        // Compound assignment operators that should lex as a single token.
+        assert_eq!(
+            lex("//= <<= >>=").unwrap(),
+            vec![Token::FloorAssign, Token::ShlAssign, Token::ShrAssign,]
+        );
+    }
+
+    #[test]
+    fn test_lexer_skips_line_comment() {
+        // Whitespace and `#` comments should be ignored between tokens.
+        assert_eq!(
+            lex("foo # trailing comment\nbar").unwrap(),
+            vec![
+                Token::Ident("foo".to_string()),
+                Token::Ident("bar".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_token_ident_method() {
+        // ident() returns the underlying identifier string for Ident tokens.
+        assert_eq!(
+            Token::Ident("foo".to_string()).ident(),
+            Some("foo".to_string())
+        );
+        // For any other token variant, ident() returns None.
+        assert_eq!(Token::Int(1).ident(), None);
+        assert_eq!(Token::Kw(Keyword::If).ident(), None);
+        assert_eq!(Token::Plus.ident(), None);
+        assert_eq!(Token::Str("s".to_string()).ident(), None);
+    }
+
+    #[test]
+    fn test_assign_tokens_helper() {
+        // assign_tokens() returns the two assignment tokens the parser
+        // currently accepts (plain `=` and compound `+=`).
+        assert_eq!(assign_tokens(), vec![Token::Assign, Token::PlusAssign]);
+    }
+
+    #[test]
+    fn test_is_keyword_helper() {
+        // Every entry in the public `KW` table is a keyword.
+        for kw in KW {
+            assert!(is_keyword(kw), "{} should be a keyword", kw);
+        }
+        // Names that look similar but are not keywords remain identifiers.
+        assert!(!is_keyword("If"));
+        assert!(!is_keyword("true"));
+        assert!(!is_keyword("none"));
+        assert!(!is_keyword("_name"));
+    }
+
+    #[test]
+    fn test_keyword_from_all_variants() {
+        assert_eq!(Keyword::from("and"), Keyword::And);
+        assert_eq!(Keyword::from("as"), Keyword::As);
+        assert_eq!(Keyword::from("break"), Keyword::Break);
+        assert_eq!(Keyword::from("class"), Keyword::Class);
+        assert_eq!(Keyword::from("continue"), Keyword::Continue);
+        assert_eq!(Keyword::from("def"), Keyword::Def);
+        assert_eq!(Keyword::from("del"), Keyword::Del);
+        assert_eq!(Keyword::from("elif"), Keyword::Elif);
+        assert_eq!(Keyword::from("else"), Keyword::Else);
+        assert_eq!(Keyword::from("for"), Keyword::For);
+        assert_eq!(Keyword::from("from"), Keyword::From);
+        assert_eq!(Keyword::from("global"), Keyword::Global);
+        assert_eq!(Keyword::from("if"), Keyword::If);
+        assert_eq!(Keyword::from("import"), Keyword::Import);
+        assert_eq!(Keyword::from("in"), Keyword::In);
+        assert_eq!(Keyword::from("is"), Keyword::Is);
+        assert_eq!(Keyword::from("lambda"), Keyword::Lambda);
+        assert_eq!(Keyword::from("nonlocal"), Keyword::Nonlocal);
+        assert_eq!(Keyword::from("None"), Keyword::None);
+        assert_eq!(Keyword::from("not"), Keyword::Not);
+        assert_eq!(Keyword::from("or"), Keyword::Or);
+        assert_eq!(Keyword::from("pass"), Keyword::Pass);
+        assert_eq!(Keyword::from("return"), Keyword::Return);
+        assert_eq!(Keyword::from("while"), Keyword::While);
+        // Unknown spellings map to Keyword::Unknown rather than panicking.
+        assert_eq!(Keyword::from("nonsense"), Keyword::Unknown);
+    }
+
+    #[test]
+    fn test_token_type_all_variants() {
+        // Operators / delimiters / special tokens map to their unit variants.
+        assert_eq!(Token::Plus.token_type(), TokenType::Plus);
+        assert_eq!(Token::Minus.token_type(), TokenType::Minus);
+        assert_eq!(Token::Mul.token_type(), TokenType::Mul);
+        assert_eq!(Token::Pow.token_type(), TokenType::Pow);
+        assert_eq!(Token::Div.token_type(), TokenType::Div);
+        assert_eq!(Token::FloorDiv.token_type(), TokenType::FloorDiv);
+        assert_eq!(Token::Mod.token_type(), TokenType::Mod);
+        assert_eq!(Token::Shl.token_type(), TokenType::Shl);
+        assert_eq!(Token::Shr.token_type(), TokenType::Shr);
+        assert_eq!(Token::BitAnd.token_type(), TokenType::BitAnd);
+        assert_eq!(Token::BitOr.token_type(), TokenType::BitOr);
+        assert_eq!(Token::BitXor.token_type(), TokenType::BitXor);
+        assert_eq!(Token::BitNot.token_type(), TokenType::BitNot);
+        assert_eq!(Token::Lt.token_type(), TokenType::Lt);
+        assert_eq!(Token::Le.token_type(), TokenType::Le);
+        assert_eq!(Token::Gt.token_type(), TokenType::Gt);
+        assert_eq!(Token::Ge.token_type(), TokenType::Ge);
+        assert_eq!(Token::Eq.token_type(), TokenType::Eq);
+        assert_eq!(Token::Ne.token_type(), TokenType::Ne);
+        assert_eq!(Token::Assign.token_type(), TokenType::Assign);
+        assert_eq!(Token::PlusAssign.token_type(), TokenType::PlusAssign);
+        assert_eq!(Token::MinusAssign.token_type(), TokenType::MinusAssign);
+        assert_eq!(Token::MulAssign.token_type(), TokenType::MulAssign);
+        assert_eq!(Token::DivAssign.token_type(), TokenType::DivAssign);
+        assert_eq!(Token::FloorAssign.token_type(), TokenType::FloorAssign);
+        assert_eq!(Token::ModAssign.token_type(), TokenType::ModAssign);
+        assert_eq!(Token::PowAssign.token_type(), TokenType::PowAssign);
+        assert_eq!(Token::BitAndAssign.token_type(), TokenType::BitAndAssign);
+        assert_eq!(Token::BitOrAssign.token_type(), TokenType::BitOrAssign);
+        assert_eq!(Token::BitXorAssign.token_type(), TokenType::BitXorAssign);
+        assert_eq!(Token::ShlAssign.token_type(), TokenType::ShlAssign);
+        assert_eq!(Token::ShrAssign.token_type(), TokenType::ShrAssign);
+        assert_eq!(Token::LParen.token_type(), TokenType::LParen);
+        assert_eq!(Token::RParen.token_type(), TokenType::RParen);
+        assert_eq!(Token::LBracket.token_type(), TokenType::LBracket);
+        assert_eq!(Token::RBracket.token_type(), TokenType::RBracket);
+        assert_eq!(Token::LBrace.token_type(), TokenType::LBrace);
+        assert_eq!(Token::RBrace.token_type(), TokenType::RBrace);
+        assert_eq!(Token::Comma.token_type(), TokenType::Comma);
+        assert_eq!(Token::Colon.token_type(), TokenType::Colon);
+        assert_eq!(Token::Dot.token_type(), TokenType::Dot);
+        assert_eq!(Token::Semi.token_type(), TokenType::Semi);
+        assert_eq!(Token::Arrow.token_type(), TokenType::Arrow);
+        // Payloads erase to the kind-only variant.
+        assert_eq!(Token::Kw(Keyword::If).token_type(), TokenType::Kw,);
+        assert_eq!(
+            Token::Ident("foo".to_string()).token_type(),
+            TokenType::Ident,
+        );
+        assert_eq!(Token::Int(42).token_type(), TokenType::Int);
+        assert_eq!(Token::Float(1.5).token_type(), TokenType::Float);
+        assert_eq!(Token::Bool(true).token_type(), TokenType::Bool);
+        assert_eq!(Token::Str("s".to_string()).token_type(), TokenType::Str,);
+        assert_eq!(
+            Token::Error("boom".to_string()).token_type(),
+            TokenType::Error,
+        );
+    }
+
+    #[test]
+    fn test_token_display_round_trip() {
+        // Each Token variant should produce a stable Display string via
+        // the Debug formatter; this guards accidental Display overrides.
+        let cases = vec![
+            Token::Kw(Keyword::If),
+            Token::Ident("foo".to_string()),
+            Token::Int(42),
+            Token::Float(1.5),
+            Token::Bool(true),
+            Token::Str("hi".to_string()),
+            Token::Plus,
+            Token::Minus,
+            Token::Mul,
+            Token::Pow,
+            Token::Div,
+            Token::FloorDiv,
+            Token::Mod,
+            Token::Shl,
+            Token::Shr,
+            Token::BitAnd,
+            Token::BitOr,
+            Token::BitXor,
+            Token::BitNot,
+            Token::Lt,
+            Token::Le,
+            Token::Gt,
+            Token::Ge,
+            Token::Eq,
+            Token::Ne,
+            Token::Assign,
+            Token::PlusAssign,
+            Token::MinusAssign,
+            Token::MulAssign,
+            Token::DivAssign,
+            Token::FloorAssign,
+            Token::ModAssign,
+            Token::PowAssign,
+            Token::BitAndAssign,
+            Token::BitOrAssign,
+            Token::BitXorAssign,
+            Token::ShlAssign,
+            Token::ShrAssign,
+            Token::LParen,
+            Token::RParen,
+            Token::LBracket,
+            Token::RBracket,
+            Token::LBrace,
+            Token::RBrace,
+            Token::Comma,
+            Token::Colon,
+            Token::Dot,
+            Token::Semi,
+            Token::Arrow,
+            Token::Eof,
+            Token::WhiteSpace,
+            Token::Error("boom".to_string()),
+        ];
+        for tk in cases {
+            // Just ensure Display is implemented and yields a non-empty string.
+            let s = format!("{}", tk);
+            assert!(!s.is_empty(), "Display for {:?} was empty", tk);
+        }
+    }
+
+    #[test]
+    fn test_token_type_display() {
+        // TokenType also implements Display via the same Debug formatter.
+        for tt in [
+            TokenType::Kw,
+            TokenType::Ident,
+            TokenType::Int,
+            TokenType::Float,
+            TokenType::Bool,
+            TokenType::Str,
+            TokenType::Plus,
+            TokenType::Minus,
+            TokenType::Mul,
+            TokenType::Pow,
+            TokenType::Div,
+            TokenType::FloorDiv,
+            TokenType::Mod,
+            TokenType::Shl,
+            TokenType::Shr,
+            TokenType::BitAnd,
+            TokenType::BitOr,
+            TokenType::BitXor,
+            TokenType::BitNot,
+            TokenType::Lt,
+            TokenType::Le,
+            TokenType::Gt,
+            TokenType::Ge,
+            TokenType::Eq,
+            TokenType::Ne,
+            TokenType::Assign,
+            TokenType::PlusAssign,
+            TokenType::MinusAssign,
+            TokenType::MulAssign,
+            TokenType::DivAssign,
+            TokenType::FloorAssign,
+            TokenType::ModAssign,
+            TokenType::PowAssign,
+            TokenType::BitAndAssign,
+            TokenType::BitOrAssign,
+            TokenType::BitXorAssign,
+            TokenType::ShlAssign,
+            TokenType::ShrAssign,
+            TokenType::LParen,
+            TokenType::RParen,
+            TokenType::LBracket,
+            TokenType::RBracket,
+            TokenType::LBrace,
+            TokenType::RBrace,
+            TokenType::Comma,
+            TokenType::Colon,
+            TokenType::Dot,
+            TokenType::Semi,
+            TokenType::Arrow,
+            TokenType::Eof,
+            TokenType::WhiteSpace,
+            TokenType::Error,
+        ] {
+            let s = format!("{}", tt);
+            assert!(!s.is_empty(), "Display for {:?} was empty", tt);
+        }
     }
 }

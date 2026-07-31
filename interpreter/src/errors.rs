@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-use crate::{ast::Expr, lexer::{Token, TokenType}};
+use crate::{
+    lexer::{Token, TokenType},
+};
 
 #[derive(Debug, Error)]
 pub enum LexerError {

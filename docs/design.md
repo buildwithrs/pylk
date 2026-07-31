@@ -6,6 +6,8 @@
 - Does not support `async` or `await` keywords.
 - Does not support `with` or `yield` statements.
 - Does not support `IMAGINARY` literals.
+- Does not support `:=` assign.
+- Does not support `Ellipsis(...)` literal.
 - Does not support `type_annotations` or `type_comments`.
 
 ## Tokens
@@ -44,7 +46,7 @@ not  or  pass  return  while
 <<   >>   &    |    ^    ~
 <    <=   >    >=   ==   !=
 =    +=   -=   *=   /=   //=  %=   **=
-@=   &=   |=   ^=   <<=  >>=  :=
+@=   &=   |=   ^=   <<=  >>=
 ```
 
 `!` and `?` are not standalone Python operators. `!=` is a single comparison operator, and Python conditional expressions use the `if ... else ...` keywords.

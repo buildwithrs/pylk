@@ -43,7 +43,6 @@ pub struct ImportName {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block(pub Vec<Stmt>);
 
-
 /*
     x           plain identifier
      x.y         attribute (single level)
@@ -151,7 +150,6 @@ pub enum AssignOperator {
     ModAssign,
     PowAssign, // **=
     FloorAssign,
-    MatMulAssign,
     BitAndAssign,
     BitOrAssign,
     BitXorAssign,
@@ -170,7 +168,6 @@ impl From<Token> for AssignOperator {
             Token::ModAssign => Self::ModAssign,
             Token::PowAssign => Self::PowAssign,
             Token::FloorAssign => Self::FloorAssign,
-            Token::MatMulAssign => Self::MatMulAssign,
             Token::BitAndAssign => Self::BitAndAssign,
             Token::BitOrAssign => Self::BitOrAssign,
             Token::BitXorAssign => Self::BitXorAssign,
