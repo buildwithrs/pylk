@@ -223,17 +223,25 @@ impl Parser {
 
             let member = match next {
                 Some(nt) => match nt {
-                    Token::Kw(Keyword::Def) => Ok(ClassMember::FuncDecl(self.parse_function()?)),
+                    Token::Kw(Keyword::Def) => {
+                        println!("parse class function");
+                        Ok(ClassMember::FuncDecl(self.parse_function()?))
+                    }
                     _ => {
                         if let Token::Ident(name) = nt {
+                            println!("parse class simple assign: {name}");
+
                             let next = self.peek_next().ok_or_else(|| ParserError::EOF)?;
                             if Self::is_assign_op(&next) {
-                                self.advance();
+                                self.advance(); // skip name
+                                self.advance(); // skip =
                                 Ok(ClassMember::Assign(self.parse_simple_assign(name, next)?))
                             } else {
+                                println!("parse class other expr: {name}");
                                 Ok(ClassMember::ExprStmt(self.parse_expression()?))
                             }
                         } else {
+                            println!("parse class other expr: {nt}");
                             Ok(ClassMember::ExprStmt(self.parse_expression()?))
                         }
                     }
@@ -244,6 +252,8 @@ impl Parser {
 
             members.push(member?);
         }
+
+        self.consume(TokenType::RBrace)?;
 
         Ok(Stmt::Class {
             name: class_name,
@@ -454,8 +464,10 @@ impl Parser {
     fn parse_simple_assign(&mut self, name: String, op: Token) -> Result<Stmt, ParserError> {
         let op = AssignOperator::from(op);
         let value = self.parse_expression()?;
+        if self.check(&Token::Semi) {
+            self.advance();
+        }
 
-        self.advance();
         Ok(Stmt::Assign {
             target: AssignTarget::Name(name),
             op,
@@ -464,6 +476,8 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<Expr, ParserError> {
+        println!("parse expression...");
+
         let cur = self.peek().ok_or_else(|| ParserError::EOF)?;
         match cur {
             Token::Kw(Keyword::Lambda) => self.parse_lambda(),
@@ -472,6 +486,8 @@ impl Parser {
     }
 
     fn parse_lambda(&mut self) -> Result<Expr, ParserError> {
+        println!("parse lambda...");
+
         self.advance();
 
         let mut parameters = vec![self.expect_ident()?];
@@ -484,6 +500,7 @@ impl Parser {
         self.consume(TokenType::Colon)?;
 
         let expr = self.parse_expression()?;
+        println!("parse lambda...: expression: {expr}");
         Ok(Expr::Lambda {
             param_list: parameters,
             expression: Box::new(expr),
@@ -491,7 +508,11 @@ impl Parser {
     }
 
     fn parse_ternary_expr(&mut self) -> Result<Expr, ParserError> {
+        println!("parse ternary expr...");
+
         let logical_or = self.parse_logical_or()?;
+
+        println!("parse ternary expr...: logical_or: {logical_or}");
 
         if self.check(&Token::Kw(Keyword::If)) {
             self.advance();
@@ -512,6 +533,8 @@ impl Parser {
 
     /// `or`   (left-associative)
     fn parse_logical_or(&mut self) -> Result<Expr, ParserError> {
+        println!("parse logical_or...");
+
         let mut left = self.parse_logical_and()?;
         while self.check(&Token::Kw(Keyword::Or)) {
             self.advance();
@@ -529,7 +552,11 @@ impl Parser {
 
     /// `and`   (left-associative)
     fn parse_logical_and(&mut self) -> Result<Expr, ParserError> {
+        println!("parse logical_and...");
+
         let mut left = self.parse_not_expr()?;
+        println!("parse logical_and...: {left}");
+
         while self.check(&Token::Kw(Keyword::And)) {
             self.advance();
 
@@ -545,6 +572,8 @@ impl Parser {
     }
 
     fn parse_not_expr(&mut self) -> Result<Expr, ParserError> {
+        println!("parse_not_expr...");
+
         if self.check(&Token::Kw(Keyword::Not)) {
             self.advance();
             Ok(Expr::LogicalNot(Box::new(self.parse_not_expr()?)))
@@ -554,7 +583,10 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParserError> {
+        println!("parse comparison...");
+
         let bit_or = self.parse_bitwise_or()?;
+        println!("parse comparison...: {bit_or}");
 
         if self.match_tokens(&[
             Token::Eq,
@@ -587,7 +619,10 @@ impl Parser {
 
     /// |   (left-associative)
     fn parse_bitwise_or(&mut self) -> Result<Expr, ParserError> {
+        println!("parse bitwise_or...");
+
         let mut left = self.parse_bitwise_xor()?;
+        println!("parse bitwise_or...: left: {left}");
 
         while self.check(&Token::BitOr) {
             self.advance();
@@ -604,7 +639,10 @@ impl Parser {
 
     /// ^   (left-associative)
     fn parse_bitwise_xor(&mut self) -> Result<Expr, ParserError> {
+        println!("parse bitwise_xor...");
+
         let mut left = self.parse_bitwise_and()?;
+        println!("parse bitwise_xor...: left: {left}");
 
         while self.check(&Token::BitXor) {
             self.advance();
@@ -622,7 +660,10 @@ impl Parser {
 
     /// &   (left-associative)
     fn parse_bitwise_and(&mut self) -> Result<Expr, ParserError> {
+        println!("parse bitwise_and...");
+
         let mut left = self.parse_shift()?;
+        println!("parse bitwise_and...: left: {left}");
 
         while self.check(&Token::BitAnd) {
             self.advance();
@@ -640,7 +681,10 @@ impl Parser {
 
     /// << and >>   (left-associative)
     fn parse_shift(&mut self) -> Result<Expr, ParserError> {
+        println!("parse shift...");
+
         let mut left = self.parse_additive()?;
+        println!("parse shift...: left: {left}");
 
         while self.match_tokens(&[Token::Shl, Token::Shr]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
@@ -664,7 +708,10 @@ impl Parser {
 
     /// +, -   (left-associative)
     fn parse_additive(&mut self) -> Result<Expr, ParserError> {
+        println!("parse additive...");
+
         let mut left = self.parse_multiplicative()?;
+        println!("parse additive...: left: {left}");
 
         while self.match_tokens(&[Token::Plus, Token::Minus]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
@@ -688,7 +735,10 @@ impl Parser {
 
     /// *, /, //, %   (left-associative)
     fn parse_multiplicative(&mut self) -> Result<Expr, ParserError> {
+        println!("parse multiplicative...");
+
         let mut left = self.parse_unary()?;
+        println!("parse multiplicative...: left: {left}");
 
         while self.match_tokens(&[Token::Mul, Token::Div, Token::FloorDiv, Token::Mod]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
@@ -712,6 +762,8 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParserError> {
+        println!("parse unary...");
+
         if self.match_tokens(&[Token::Plus, Token::Minus, Token::BitNot]) {
             let cur = self.advance().ok_or_else(|| ParserError::EOF)?;
             let right = self.parse_unary()?;
@@ -727,12 +779,18 @@ impl Parser {
             });
         }
 
-        self.parse_power()
+        let power = self.parse_power()?;
+        println!("parse unary...: power: {power}");
+        Ok(power)
     }
 
     /// **
     fn parse_power(&mut self) -> Result<Expr, ParserError> {
+        println!("parse power...");
+
         let postfix = self.parse_postfix()?;
+        println!("parse power...: postfix: {postfix}");
+
         if self.check(&Token::Pow) {
             self.advance();
 
@@ -745,52 +803,94 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> Result<Expr, ParserError> {
+        println!("parse postfix...");
+
         let pri = self.parse_primary()?;
+        println!("parse postfix...: primary: {pri}");
+        let result = self.parse_postfix_op(pri)?;
+        println!("parse postfix...: result: {result}");
+        Ok(result)
+    }
 
-        if self.check(&Token::LParen) {
-            self.advance();
-
-            let mut args = Vec::new();
-            loop {
-                if self.check(&Token::RParen) {
-                    break;
-                }
-
-                args.push(self.parse_expression()?);
-                if self.check(&Token::Comma) {
+    fn parse_postfix_op(&mut self, pri: Expr) -> Result<Expr, ParserError> {
+        match self.peek() {
+            Some(Token::LParen) => {
+                let fn_call = self.parse_func_call(pri)?;
+                Ok(self.parse_postfix_op(fn_call)?)
+            }
+            Some(Token::LBracket) => {
+                self.advance();
+                let slice_expr = self.parse_slice(pri)?;
+                if self.check(&Token::Semi) {
                     self.advance();
                 }
+
+                Ok(self.parse_postfix_op(slice_expr)?)
             }
-            self.consume(TokenType::RParen)?;
-            if self.check(&Token::Semi) {
+            Some(Token::Dot) => {
+                self.advance();
+                let attr_name = self.expect_ident()?;
+                if self.check(&Token::Semi) {
+                    self.advance();
+                }
+
+                let attr = Expr::Attribute {
+                    target: Box::new(pri),
+                    field_name: attr_name,
+                };
+                Ok(self.parse_postfix_op(attr)?)
+            },
+            // No more postfix ops to apply — return the accumulated
+            // expression. The caller (parse_postfix → parse_power →
+            // parse_unary → ...) will handle the next token.
+            _ => Ok(pri),
+        }
+    }
+
+    fn parse_func_call(&mut self, pri: Expr) -> Result<Expr, ParserError> {
+        println!("parsing func calll...: {pri}");
+
+        self.advance();
+
+        let mut args = Vec::new();
+        loop {
+            let t = self.peek();
+            println!("[parse_func_call] checking {:?}", t);
+
+            if self.check(&Token::RParen) {
+                break;
+            }
+
+            println!("parse arg expr...");
+            let arg = self.parse_expression()?;
+            println!("pushing arg: {arg}");
+
+            args.push(arg);
+
+            println!("consume comma...");
+            if self.check(&Token::Comma) {
                 self.advance();
             }
-
-            return Ok(Expr::FuncCall {
-                fn_expr: Box::new(pri),
-                args,
-            });
-        } else if self.check(&Token::LBracket) {
-            self.advance();
-
-            let expr = self.parse_slice(pri)?;
-            return Ok(expr);
-        } else if self.check(&Token::Dot) {
-            self.advance();
-            let attr = self.expect_ident()?;
-            return Ok(Expr::Attribute {
-                target: Box::new(pri),
-                field_name: attr,
-            });
         }
 
-        Ok(pri)
+        self.consume(TokenType::RParen)?;
+        if self.check(&Token::Semi) {
+            self.advance();
+        }
+
+        Ok(Expr::FuncCall {
+            fn_expr: Box::new(pri),
+            args,
+        })
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParserError> {
-        let t = self.advance().ok_or_else(|| ParserError::EOF)?;
+        println!("parse primary...");
 
-        match self.parse_literal(t.clone()) {
+        let t = self.advance().ok_or_else(|| ParserError::EOF)?;
+        println!("parse primary...: token: {t}");
+
+        let result = match self.parse_literal(t.clone()) {
             Ok(v) => Ok(v),
             Err(_) => match t {
                 Token::Ident(id) => Ok(Expr::Ident(id)),
@@ -799,7 +899,9 @@ impl Parser {
                 Token::LParen => self.parse_tuple_or_grouped(),
                 _ => Err(ParserError::UnsupportToken(t)),
             },
-        }
+        }?;
+        println!("parse primary...: result: {result}");
+        Ok(result)
     }
 
     /// Parses `pri[<expr>]`, `pri[<start>:]`, `pri[:<end>]`,
@@ -812,6 +914,8 @@ impl Parser {
     /// so both forms share the same end/step tail and we only branch on
     /// whether the leading character is `:`.
     fn parse_slice(&mut self, pri: Expr) -> Result<Expr, ParserError> {
+        println!("parse slice...");
+
         // Parse the optional start bound. A leading `:` means start is
         // absent; otherwise parse an expression and check whether it's
         // really an index access (no `:` follows).
@@ -823,10 +927,12 @@ impl Parser {
             // `[expr]` with no `:` is an index, not a slice.
             if self.check(&Token::RBracket) {
                 self.advance();
-                return Ok(Expr::Index {
+                let index = Expr::Index {
                     target: Box::new(pri),
                     index: Box::new(expr),
-                });
+                };
+                println!("parse slice...: index: {index}");
+                return Ok(index);
             }
             self.consume(TokenType::Colon)?;
             Some(expr)
@@ -859,12 +965,14 @@ impl Parser {
             None => return Err(ParserError::EOF),
         };
 
-        Ok(Expr::Slice {
+        let slice = Expr::Slice {
             name: Box::new(pri),
             start: start.map(Box::new),
             end: end.map(Box::new),
             step: step.map(Box::new),
-        })
+        };
+        println!("parse slice...: slice: {slice}");
+        Ok(slice)
     }
 
     /// ()
@@ -876,10 +984,14 @@ impl Parser {
     /// trailing-comma rule: `(x)` is just `x`, but `(x,)` is a
     /// one-element tuple. `()` is the empty tuple.
     fn parse_tuple_or_grouped(&mut self) -> Result<Expr, ParserError> {
+        println!("parse tuple_or_grouped...");
+
         // empty tuple: `()`
         if self.check(&Token::RParen) {
             self.advance();
-            return Ok(Expr::TupleLiteral(Vec::new()));
+            let empty = Expr::TupleLiteral(Vec::new());
+            println!("parse tuple_or_grouped...: empty tuple: {empty}");
+            return Ok(empty);
         }
 
         let first = self.parse_expression()?;
@@ -887,6 +999,7 @@ impl Parser {
         // grouped expression: `(expr)` -- no comma after the inner expr
         if !self.check(&Token::Comma) {
             self.consume(TokenType::RParen)?;
+            println!("parse tuple_or_grouped...: grouped: {first}");
             return Ok(first);
         }
 
@@ -901,11 +1014,15 @@ impl Parser {
             elements.push(self.parse_expression()?);
         }
         self.consume(TokenType::RParen)?;
-        Ok(Expr::TupleLiteral(elements))
+        let tuple = Expr::TupleLiteral(elements);
+        println!("parse tuple_or_grouped...: tuple: {tuple}");
+        Ok(tuple)
     }
 
     /// `[ expr { "," expr } ]`
     fn parse_list_literal(&mut self) -> Result<Expr, ParserError> {
+        println!("parse list_literal...");
+
         let mut elements = Vec::new();
         if !self.check(&Token::RBracket) {
             elements.push(self.parse_expression()?);
@@ -921,11 +1038,15 @@ impl Parser {
         }
 
         self.consume(TokenType::RBracket)?;
-        Ok(Expr::ListLiteral(elements))
+        let list = Expr::ListLiteral(elements);
+        println!("parse list_literal...: list: {list}");
+        Ok(list)
     }
 
     /// `{ expr ":" expr { "," expr ":" expr } }`
     fn parse_dict_literal(&mut self) -> Result<Expr, ParserError> {
+        println!("parse dict_literal...");
+
         let mut entries = Vec::new();
         if !self.check(&Token::RBrace) {
             let key = self.parse_expression()?;
@@ -955,7 +1076,9 @@ impl Parser {
             }
         }
         self.consume(TokenType::RBrace)?;
-        Ok(Expr::DictLiteral(entries))
+        let dict = Expr::DictLiteral(entries);
+        println!("parse dict_literal...: dict: {dict}");
+        Ok(dict)
     }
 
     /// Attempts to parse a `{ ... }` at statement position as a dict
@@ -968,12 +1091,16 @@ impl Parser {
     /// require the first inner expression to be followed by `:`, so
     /// blocks like `{x; y;}` are left untouched.
     fn try_parse_dict_literal_at_stmt(&mut self) -> Result<Expr, ParserError> {
+        println!("try_parse_dict_literal_at_stmt...");
+
         self.consume(TokenType::LBrace)?;
 
         // `{}` → empty dict.
         if self.check(&Token::RBrace) {
             self.advance();
-            return Ok(Expr::DictLiteral(Vec::new()));
+            let empty = Expr::DictLiteral(Vec::new());
+            println!("try_parse_dict_literal_at_stmt...: empty dict: {empty}");
+            return Ok(empty);
         }
 
         // Parse the first key expression. If the next token isn't `:`,
@@ -1008,18 +1135,24 @@ impl Parser {
             });
         }
         self.consume(TokenType::RBrace)?;
-        Ok(Expr::DictLiteral(entries))
+        let dict = Expr::DictLiteral(entries);
+        println!("try_parse_dict_literal_at_stmt...: dict: {dict}");
+        Ok(dict)
     }
 
     fn parse_literal(&mut self, t: Token) -> Result<Expr, ParserError> {
-        match t {
+        println!("parse literal...: token: {t}");
+
+        let result = match t {
             Token::Str(s) => Ok(Expr::Literal(LiteralExpr::Str(s))),
             Token::Int(i) => Ok(Expr::Literal(LiteralExpr::Int(i))),
             Token::Float(f) => Ok(Expr::Literal(LiteralExpr::Float(f))),
             Token::Bool(b) => Ok(Expr::Literal(LiteralExpr::Boolean(b))),
             Token::Kw(Keyword::None) => Ok(Expr::Literal(LiteralExpr::None)),
             _ => Err(ParserError::UnsupportToken(t)),
-        }
+        }?;
+        println!("parse literal...: result: {result}");
+        Ok(result)
     }
 
     fn consume(&mut self, token_type: TokenType) -> Result<Token, ParserError> {
@@ -1084,8 +1217,8 @@ impl Parser {
 mod tests {
     use crate::{
         ast::{
-            AssignOperator, AssignTarget, BinaryOp, Block, CompareOp, Expr, ImportName,
-            LiteralExpr, LogicalOp, Node, Program, Stmt, UnaryOp,
+            AssignOperator, AssignTarget, BinaryOp, Block, ClassMember, CompareOp, Expr,
+            ImportName, LiteralExpr, LogicalOp, Node, Program, Stmt, UnaryOp,
         },
         errors::ParserError,
         lexer::{Lexer, Token},
@@ -2112,5 +2245,1157 @@ mod tests {
                 }),
             }
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Boolean / None / Int / Float literals.
+    //
+    // The existing `test_parse_literal` / `test_parse_literal1` only
+    // cover float and string at the top level. These tests pin the
+    // remaining literal forms inside `expr_of` so the parser cannot
+    // silently regress on them.
+    // -----------------------------------------------------------------
+
+    // -- literals (boolean / none) -----------------------------------
+
+    #[test]
+    fn test_expr_bool_true() {
+        assert_eq!(expr_of("True;"), Expr::Literal(LiteralExpr::Boolean(true)));
+    }
+
+    #[test]
+    fn test_expr_bool_false() {
+        assert_eq!(
+            expr_of("False;"),
+            Expr::Literal(LiteralExpr::Boolean(false))
+        );
+    }
+
+    #[test]
+    fn test_expr_none() {
+        assert_eq!(expr_of("None;"), Expr::Literal(LiteralExpr::None));
+    }
+
+    // -- literals (int / float) --------------------------------------
+
+    #[test]
+    fn test_expr_int_literal() {
+        assert_eq!(expr_of("42;"), Expr::Literal(LiteralExpr::Int(42)));
+    }
+
+    #[test]
+    fn test_expr_negative_int() {
+        // `-42` is `Unary { op: Minus, expr: Literal(Int(42)) }`,
+        // not a negative literal — the lexer only emits positive
+        // integers and unary minus is the parser's job.
+        assert_eq!(
+            expr_of("-42;"),
+            Expr::Unary {
+                op: UnaryOp::Minus,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(42))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_float_literal() {
+        assert_eq!(expr_of("3.14;"), Expr::Literal(LiteralExpr::Float(3.14)));
+    }
+
+    // -----------------------------------------------------------------
+    // Compound assignment operators.
+    //
+    // `=` and `+=` are covered by `test_parse_assign*`. The remaining
+    // 11 compound operators are all matched by `is_assign_op` and
+    // mapped to `AssignOperator::*` via `AssignOperator::from`. These
+    // tests pin each one down so a future edit to the token list or
+    // the `From<Token>` impl cannot silently drop one.
+    // -----------------------------------------------------------------
+
+    // -- compound assignment ------------------------------------------
+
+    #[test]
+    fn test_parse_assign_minus() {
+        let program = parse_source("x -= 1;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::MinusAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_mul() {
+        let program = parse_source("x *= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::MulAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_div() {
+        let program = parse_source("x /= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::DivAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_floordiv() {
+        let program = parse_source("x //= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::FloorAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_mod() {
+        let program = parse_source("x %= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::ModAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_pow() {
+        let program = parse_source("x **= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::PowAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_bitand() {
+        let program = parse_source("x &= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::BitAndAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_bitor() {
+        let program = parse_source("x |= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::BitOrAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_bitxor() {
+        let program = parse_source("x ^= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::BitXorAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_shl() {
+        let program = parse_source("x <<= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::ShlAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_shr() {
+        let program = parse_source("x >>= 2;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("x".to_string()),
+                op: AssignOperator::ShrAssign,
+                expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_assign_tuple_target() {
+        // `(a, b) = (1, 2);` — parenthesized tuple destructure on the
+        // LHS, parenthesized tuple literal on the RHS. Both sides go
+        // through `parse_tuple_or_grouped`; the LHS ends up as
+        // `AssignTarget::Tuple` and the RHS as `Expr::TupleLiteral`.
+        let program = parse_source("(a, b) = (1, 2);");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Tuple(vec!["a".to_string(), "b".to_string()]),
+                op: AssignOperator::Assign,
+                expr: Box::new(Expr::TupleLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                ])),
+            })])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // If statement shapes.
+    //
+    // The existing tests do not exercise `parse_if` at all. The block
+    // bodies follow the parser's "no trailing `;` after a non-call
+    // expression" rule — see the comment header on the `parse_block`
+    // implementation for the rationale.
+    // -----------------------------------------------------------------
+
+    // -- if -----------------------------------------------------------
+
+    #[test]
+    fn test_parse_if_no_else() {
+        let program = parse_source("if True { 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::If {
+                cond: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                then: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+                elif_branches: vec![],
+                else_branch: None,
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_if_else() {
+        let program = parse_source("if True { 1 } else { 2 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::If {
+                cond: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                then: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+                elif_branches: vec![],
+                else_branch: Some(Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(2)
+                )))])),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_if_elif() {
+        let program = parse_source("if True { 1 } elif False { 2 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::If {
+                cond: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                then: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+                elif_branches: vec![(
+                    Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+                    Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                        LiteralExpr::Int(2)
+                    )))])
+                )],
+                else_branch: None,
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_if_elif_else() {
+        let program = parse_source("if True { 1 } elif False { 2 } else { 3 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::If {
+                cond: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                then: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+                elif_branches: vec![(
+                    Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+                    Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                        LiteralExpr::Int(2)
+                    )))])
+                )],
+                else_branch: Some(Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(3)
+                )))])),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_if_multiple_elifs() {
+        let program = parse_source("if True { 1 } elif False { 2 } elif True { 3 } else { 4 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::If {
+                cond: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                then: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+                elif_branches: vec![
+                    (
+                        Box::new(Expr::Literal(LiteralExpr::Boolean(false))),
+                        Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                            LiteralExpr::Int(2)
+                        )))]),
+                    ),
+                    (
+                        Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                        Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                            LiteralExpr::Int(3)
+                        )))]),
+                    ),
+                ],
+                else_branch: Some(Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(4)
+                )))])),
+            })])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // While / for / return.
+    //
+    // Bodies follow the same "no trailing `;` after a non-call
+    // expression" rule. `return` and the loop forms are tested at the
+    // top level (or inside a function body whose own `}` is consumed
+    // by the enclosing `parse_block`).
+    // -----------------------------------------------------------------
+
+    // -- while / for --------------------------------------------------
+
+    #[test]
+    fn test_parse_while() {
+        let program = parse_source("while True { 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::While {
+                cond: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                body: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_while_with_call_body() {
+        // Function-call body is the one case where a trailing `;` is
+        // OK inside a block — `parse_postfix` consumes it after the
+        // closing `)`. This test pins that behavior.
+        let program = parse_source("while True { print(1); }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::While {
+                cond: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                body: Block(vec![Stmt::ExprStmt(Box::new(Expr::FuncCall {
+                    fn_expr: Box::new(Expr::Ident("print".to_string())),
+                    args: vec![Expr::Literal(LiteralExpr::Int(1))],
+                }))]),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_for() {
+        let program = parse_source("for x in items { 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::For {
+                loop_var: "x".to_string(),
+                iter_expr: Box::new(Expr::Ident("items".to_string())),
+                body: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_for_list_iter() {
+        // The iter expression is parsed via `parse_expression`, so
+        // any expression form works — here, a list literal.
+        let program = parse_source("for x in [1, 2, 3] { x }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::For {
+                loop_var: "x".to_string(),
+                iter_expr: Box::new(Expr::ListLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                    Expr::Literal(LiteralExpr::Int(3)),
+                ])),
+                body: Block(vec![Stmt::ExprStmt(Box::new(Expr::Ident("x".to_string())))]),
+            })])
+        );
+    }
+
+    // -- return -------------------------------------------------------
+
+    #[test]
+    fn test_parse_return_no_value() {
+        // At the top level, the outer `parse` loop strips the
+        // trailing `;`, so `return;` parses cleanly. Inside a block
+        // body the same `;` would dangle and the next `parse_stmt`
+        // would fail — that is exercised indirectly by the
+        // function-body tests.
+        let program = parse_source("return;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Return { value: None })])
+        );
+    }
+
+    #[test]
+    fn test_parse_return_value() {
+        let program = parse_source("return 1;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Return {
+                value: Some(Expr::Literal(LiteralExpr::Int(1))),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_return_expr() {
+        let program = parse_source("return a + b;");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Return {
+                value: Some(Expr::BinaryExpr {
+                    left: Box::new(Expr::Ident("a".to_string())),
+                    op: BinaryOp::Plus,
+                    right: Box::new(Expr::Ident("b".to_string())),
+                }),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_return_inside_function() {
+        // `return 1` (no `;` after) is the form that works inside a
+        // function body — the body's `}` terminates the return and is
+        // consumed by `parse_block`'s trailing advance.
+        let program = parse_source("def m() { return 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Func {
+                name: "m".to_string(),
+                param_list: vec![],
+                body: Block(vec![Stmt::Return {
+                    value: Some(Expr::Literal(LiteralExpr::Int(1))),
+                }]),
+            })])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Function with parameters.
+    //
+    // `parse_function` always sets `default: None` and never reads a
+    // `= default` form, so we don't test default values here. These
+    // tests pin the param-list parsing and the body shape.
+    // -----------------------------------------------------------------
+
+    // -- function with params -----------------------------------------
+
+    #[test]
+    fn test_parse_function_one_param() {
+        let program = parse_source("def f(x) { x }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Func {
+                name: "f".to_string(),
+                param_list: vec![crate::ast::Parameter {
+                    name: "x".to_string(),
+                    default: None,
+                }],
+                body: Block(vec![Stmt::ExprStmt(Box::new(Expr::Ident("x".to_string())))]),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_function_multi_params() {
+        let program = parse_source("def f(a, b, c) { 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Func {
+                name: "f".to_string(),
+                param_list: vec![
+                    crate::ast::Parameter {
+                        name: "a".to_string(),
+                        default: None,
+                    },
+                    crate::ast::Parameter {
+                        name: "b".to_string(),
+                        default: None,
+                    },
+                    crate::ast::Parameter {
+                        name: "c".to_string(),
+                        default: None,
+                    },
+                ],
+                body: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                    LiteralExpr::Int(1)
+                )))]),
+            })])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Empty block / empty dict.
+    //
+    // `parse_stmt` always tries `try_parse_dict_literal_at_stmt`
+    // first, so a bare `{}` is an empty *dict* (ExprStmt), not a
+    // block. A block with no statements can only appear as a function
+    // body, where `parse_block` accepts the immediately-closing `}`.
+    // -----------------------------------------------------------------
+
+    // -- empty block / empty dict -------------------------------------
+
+    #[test]
+    fn test_parse_empty_block() {
+        // `def f() {}` is the only way to get a `Stmt::Block` with
+        // no statements at the top level: a bare `{}` is a dict.
+        let program = parse_source("def f() {}");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Func {
+                name: "f".to_string(),
+                param_list: vec![],
+                body: Block(vec![]),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_empty_dict_expr() {
+        // Bare `{}` is always parsed as an empty dict (not a block)
+        // by `try_parse_dict_literal_at_stmt`. The trailing `;` is
+        // consumed by the outer `parse` loop.
+        let program = parse_source("{};");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(
+                Expr::DictLiteral(Vec::new())
+            )))])
+        );
+    }
+
+    #[test]
+    fn test_parse_block_with_one_stmt() {
+        // `{ 1 }` is a block (not a dict) because the first inner
+        // expression is not followed by `:`.
+        let program = parse_source("{ 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Block(Block(vec![Stmt::ExprStmt(
+                Box::new(Expr::Literal(LiteralExpr::Int(1)))
+            )])))])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Multi-statement programs.
+    //
+    // The outer `parse` loop (parser.rs:43-56) strips leading `;`
+    // tokens, so multiple statements separated by `;` form a single
+    // Program.
+    // -----------------------------------------------------------------
+
+    // -- multi-statement program --------------------------------------
+
+    #[test]
+    fn test_parse_multi_stmt_program() {
+        let program = parse_source("x = 1; y = 2; z = x + y;");
+        assert_eq!(
+            program,
+            Program(vec![
+                Node::new(Stmt::Assign {
+                    target: AssignTarget::Name("x".to_string()),
+                    op: AssignOperator::Assign,
+                    expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                }),
+                Node::new(Stmt::Assign {
+                    target: AssignTarget::Name("y".to_string()),
+                    op: AssignOperator::Assign,
+                    expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                }),
+                Node::new(Stmt::Assign {
+                    target: AssignTarget::Name("z".to_string()),
+                    op: AssignOperator::Assign,
+                    expr: Box::new(Expr::BinaryExpr {
+                        left: Box::new(Expr::Ident("x".to_string())),
+                        op: BinaryOp::Plus,
+                        right: Box::new(Expr::Ident("y".to_string())),
+                    }),
+                }),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_multi_stmt_mixed() {
+        // Import + function + class. The class body uses a trailing
+        // assignment (no `;`) so its `}` is consumed by
+        // `parse_simple_assign`'s trailing advance — see the
+        // `class` tests below for the detailed explanation.
+        let program =
+            parse_source("import foo; def g() { 1 } class C { def m() { print(1); } x = 1 }");
+        assert_eq!(
+            program,
+            Program(vec![
+                Node::new(Stmt::Import {
+                    path: vec!["foo".to_string()],
+                    alias: None,
+                }),
+                Node::new(Stmt::Func {
+                    name: "g".to_string(),
+                    param_list: vec![],
+                    body: Block(vec![Stmt::ExprStmt(Box::new(Expr::Literal(
+                        LiteralExpr::Int(1)
+                    )))]),
+                }),
+                Node::new(Stmt::Class {
+                    name: "C".to_string(),
+                    members: vec![
+                        ClassMember::FuncDecl(Stmt::Func {
+                            name: "m".to_string(),
+                            param_list: vec![],
+                            body: Block(vec![Stmt::ExprStmt(Box::new(Expr::FuncCall {
+                                fn_expr: Box::new(Expr::Ident("print".to_string())),
+                                args: vec![Expr::Literal(LiteralExpr::Int(1))],
+                            }))]),
+                        }),
+                        ClassMember::Assign(Stmt::Assign {
+                            target: AssignTarget::Name("x".to_string()),
+                            op: AssignOperator::Assign,
+                            expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                        }),
+                    ],
+                }),
+            ])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Attribute / call chains.
+    //
+    // `parse_postfix` is a single-pass loop that re-enters after a
+    // `(`, `[`, or `.` op, so chained accesses and calls fold into
+    // nested `Attribute` / `FuncCall` / `Index` nodes.
+    // -----------------------------------------------------------------
+
+    // -- attribute / call chains --------------------------------------
+
+    #[test]
+    fn test_parse_attribute_chain() {
+        // `a.b.c` left-folds into `Attribute(Attribute(a, b), c)`.
+        assert_eq!(
+            expr_of("a.b.c;"),
+            Expr::Attribute {
+                target: Box::new(Expr::Attribute {
+                    target: Box::new(Expr::Ident("a".to_string())),
+                    field_name: "b".to_string(),
+                }),
+                field_name: "c".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_attribute_after_call() {
+        // `a().b` — call result fed into attribute access.
+        assert_eq!(
+            expr_of("a().b;"),
+            Expr::Attribute {
+                target: Box::new(Expr::FuncCall {
+                    fn_expr: Box::new(Expr::Ident("a".to_string())),
+                    args: vec![],
+                }),
+                field_name: "b".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_attribute_then_call() {
+        // `a.b()` — attribute access, then call on the attribute.
+        assert_eq!(
+            expr_of("a.b();"),
+            Expr::FuncCall {
+                fn_expr: Box::new(Expr::Attribute {
+                    target: Box::new(Expr::Ident("a".to_string())),
+                    field_name: "b".to_string(),
+                }),
+                args: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_call_multi_args() {
+        assert_eq!(
+            expr_of("f(1, 2, 3);"),
+            Expr::FuncCall {
+                fn_expr: Box::new(Expr::Ident("f".to_string())),
+                args: vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                    Expr::Literal(LiteralExpr::Int(3)),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_call_nested() {
+        // `f(g(1), h(2))` — outer call's args are themselves calls.
+        assert_eq!(
+            expr_of("f(g(1), h(2));"),
+            Expr::FuncCall {
+                fn_expr: Box::new(Expr::Ident("f".to_string())),
+                args: vec![
+                    Expr::FuncCall {
+                        fn_expr: Box::new(Expr::Ident("g".to_string())),
+                        args: vec![Expr::Literal(LiteralExpr::Int(1))],
+                    },
+                    Expr::FuncCall {
+                        fn_expr: Box::new(Expr::Ident("h".to_string())),
+                        args: vec![Expr::Literal(LiteralExpr::Int(2))],
+                    },
+                ],
+            }
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Nested / multi-operator expressions.
+    // -----------------------------------------------------------------
+
+    // -- nested expressions -------------------------------------------
+
+    #[test]
+    fn test_expr_nested_arith() {
+        // `(1 + 2) * 3` — grouping is a syntactic form, the inner
+        // expression is what the AST records.
+        assert_eq!(
+            expr_of("(1 + 2) * 3;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::BinaryExpr {
+                    left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                    op: BinaryOp::Plus,
+                    right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                }),
+                op: BinaryOp::Mul,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(3))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_call_inside_arith() {
+        assert_eq!(
+            expr_of("f(1) + g(2);"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::FuncCall {
+                    fn_expr: Box::new(Expr::Ident("f".to_string())),
+                    args: vec![Expr::Literal(LiteralExpr::Int(1))],
+                }),
+                op: BinaryOp::Plus,
+                right: Box::new(Expr::FuncCall {
+                    fn_expr: Box::new(Expr::Ident("g".to_string())),
+                    args: vec![Expr::Literal(LiteralExpr::Int(2))],
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_index_inside_arith() {
+        assert_eq!(
+            expr_of("arr[0] + 1;"),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::Index {
+                    target: Box::new(Expr::Ident("arr".to_string())),
+                    index: Box::new(Expr::Literal(LiteralExpr::Int(0))),
+                }),
+                op: BinaryOp::Plus,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Tuple / list / dict shapes.
+    //
+    // The existing tests cover only `(1, 2)` and `{"a": 1}`. These
+    // pin down the remaining shapes including the empty tuple, the
+    // single-element tuple, trailing commas, and nested collections.
+    // -----------------------------------------------------------------
+
+    // -- tuple / list / dict shapes -----------------------------------
+
+    #[test]
+    fn test_expr_empty_tuple() {
+        // `()` is the empty tuple per `parse_tuple_or_grouped`.
+        assert_eq!(expr_of("();"), Expr::TupleLiteral(Vec::new()));
+    }
+
+    #[test]
+    fn test_expr_single_element_tuple() {
+        // `(1,)` is the one-element tuple — the trailing comma is
+        // what distinguishes it from a grouped expression `(1)`.
+        assert_eq!(
+            expr_of("(1,);"),
+            Expr::TupleLiteral(vec![Expr::Literal(LiteralExpr::Int(1))])
+        );
+    }
+
+    #[test]
+    fn test_expr_nested_list() {
+        assert_eq!(
+            expr_of("[[1, 2], [3, 4]];"),
+            Expr::ListLiteral(vec![
+                Expr::ListLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                ]),
+                Expr::ListLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(3)),
+                    Expr::Literal(LiteralExpr::Int(4)),
+                ]),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_expr_nested_dict() {
+        assert_eq!(
+            expr_of(r#"{"a": {"b": 1}};"#),
+            Expr::DictLiteral(vec![crate::ast::DictEntry {
+                key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                value: Box::new(Expr::DictLiteral(vec![crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("b".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                }])),
+            }])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_multi_entry() {
+        assert_eq!(
+            expr_of(r#"{"a": 1, "b": 2};"#),
+            Expr::DictLiteral(vec![
+                crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                },
+                crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("b".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_trailing_comma() {
+        // `parse_dict_literal` allows a trailing `,` before `}`.
+        assert_eq!(
+            expr_of(r#"{"a": 1,}"#),
+            Expr::DictLiteral(vec![crate::ast::DictEntry {
+                key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }])
+        );
+    }
+
+    #[test]
+    fn test_expr_list_trailing_comma() {
+        // `parse_list_literal` allows a trailing `,` before `]`.
+        assert_eq!(
+            expr_of("[1, 2,];"),
+            Expr::ListLiteral(vec![
+                Expr::Literal(LiteralExpr::Int(1)),
+                Expr::Literal(LiteralExpr::Int(2)),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_expr_nested_tuple() {
+        assert_eq!(
+            expr_of("((1, 2), (3, 4));"),
+            Expr::TupleLiteral(vec![
+                Expr::TupleLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                ]),
+                Expr::TupleLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(3)),
+                    Expr::Literal(LiteralExpr::Int(4)),
+                ]),
+            ])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Class parsing.
+    // -----------------------------------------------------------------
+
+    // -- class --------------------------------------------------------
+
+    #[test]
+    fn test_parse_class_with_assignment() {
+        // Single-assignment body — the trailing `self.advance()` in
+        // `parse_simple_assign` consumes the class's `}`.
+        let program = parse_source("class C { x = 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Class {
+                name: "C".to_string(),
+                members: vec![ClassMember::Assign(Stmt::Assign {
+                    target: AssignTarget::Name("x".to_string()),
+                    op: AssignOperator::Assign,
+                    expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                })],
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_class_with_method() {
+        // Method + trailing assignment. The method's body is a
+        // function call (so `parse_postfix` consumes the `;`), and
+        // the trailing assignment consumes the class's `}`.
+        let program = parse_source("class C { def m() { print(1); } x = 1 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Class {
+                name: "C".to_string(),
+                members: vec![
+                    ClassMember::FuncDecl(Stmt::Func {
+                        name: "m".to_string(),
+                        param_list: vec![],
+                        body: Block(vec![Stmt::ExprStmt(Box::new(Expr::FuncCall {
+                            fn_expr: Box::new(Expr::Ident("print".to_string())),
+                            args: vec![Expr::Literal(LiteralExpr::Int(1))],
+                        }))]),
+                    }),
+                    ClassMember::Assign(Stmt::Assign {
+                        target: AssignTarget::Name("x".to_string()),
+                        op: AssignOperator::Assign,
+                        expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                    }),
+                ],
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_class_with_multiple_members() {
+        // Assignment (with `;`), method, assignment (no `;`).
+        let program = parse_source("class C { x = 1; def m() { print(1); } y = 2 }");
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Class {
+                name: "C".to_string(),
+                members: vec![
+                    ClassMember::Assign(Stmt::Assign {
+                        target: AssignTarget::Name("x".to_string()),
+                        op: AssignOperator::Assign,
+                        expr: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                    }),
+                    ClassMember::FuncDecl(Stmt::Func {
+                        name: "m".to_string(),
+                        param_list: vec![],
+                        body: Block(vec![Stmt::ExprStmt(Box::new(Expr::FuncCall {
+                            fn_expr: Box::new(Expr::Ident("print".to_string())),
+                            args: vec![Expr::Literal(LiteralExpr::Int(1))],
+                        }))]),
+                    }),
+                    ClassMember::Assign(Stmt::Assign {
+                        target: AssignTarget::Name("y".to_string()),
+                        op: AssignOperator::Assign,
+                        expr: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                    }),
+                ],
+            })])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Set literals — expected to FAIL.
+    //
+    // `Expr::SetLiteral` is defined in `ast.rs` and the grammar
+    // (`docs/grammar.ebnf:293-297`) describes the `{x, y, z}` form,
+    // but `parse_dict_literal` and `try_parse_dict_literal_at_stmt`
+    // only produce `Expr::DictLiteral`. There is no set-literal
+    // branch. These tests assert the expected set AST and will fail
+    // with a `ParserError` from the missing-`:` check.
+    //
+    // See `docs/parser_bugs_01.md` for the recorded failures.
+    // -----------------------------------------------------------------
+
+    // -- set literals (expected failures) -----------------------------
+
+    #[test]
+    fn test_expr_set_literal() {
+        // `{1, 2, 3}` — the comma after the first element signals a
+        // set, not a dict (a dict requires `:`). The parser instead
+        // routes this through `parse_block` and chokes on the
+        // dangling `,`.
+        assert_eq!(
+            expr_of("{1, 2, 3};"),
+            Expr::SetLiteral(vec![
+                Expr::Literal(LiteralExpr::Int(1)),
+                Expr::Literal(LiteralExpr::Int(2)),
+                Expr::Literal(LiteralExpr::Int(3)),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_expr_set_literal_single() {
+        assert_eq!(
+            expr_of("{1};"),
+            Expr::SetLiteral(vec![Expr::Literal(LiteralExpr::Int(1))])
+        );
+    }
+
+    #[test]
+    fn test_expr_set_literal_mixed() {
+        assert_eq!(
+            expr_of(r#"{1, "x", True};"#),
+            Expr::SetLiteral(vec![
+                Expr::Literal(LiteralExpr::Int(1)),
+                Expr::Literal(LiteralExpr::Str("x".to_string())),
+                Expr::Literal(LiteralExpr::Boolean(true)),
+            ])
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Comparison operators `in` / `not in` / `is` / `is not` —
+    // expected to FAIL.
+    //
+    // `CompareOp::In`, `CompareOp::NotIn`, `CompareOp::Is`, and
+    // `CompareOp::IsNot` are defined in `ast.rs` but
+    // `parse_comparison` (parser.rs:556-586) only matches
+    // `==`, `!=`, `<`, `<=`, `>`, `>=`. The `in` / `is` keyword
+    // tokens are never consumed inside `parse_comparison`, so the
+    // surrounding `parse_assignment_stmt` falls through and the
+    // outer parser then chokes on the leftover keyword.
+    //
+    // See `docs/parser_bugs_01.md` for the recorded failures.
+    // -----------------------------------------------------------------
+
+    // -- comparison in / is (expected failures) -----------------------
+
+    #[test]
+    fn test_expr_in() {
+        assert_eq!(
+            expr_of("1 in [1, 2];"),
+            Expr::Compare {
+                op: CompareOp::In,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                right: Box::new(Expr::ListLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                ])),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_not_in() {
+        assert_eq!(
+            expr_of("1 not in [1, 2];"),
+            Expr::Compare {
+                op: CompareOp::NotIn,
+                left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                right: Box::new(Expr::ListLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                ])),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_is() {
+        assert_eq!(
+            expr_of("x is None;"),
+            Expr::Compare {
+                op: CompareOp::Is,
+                left: Box::new(Expr::Ident("x".to_string())),
+                right: Box::new(Expr::Literal(LiteralExpr::None)),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_is_not() {
+        assert_eq!(
+            expr_of("x is not None;"),
+            Expr::Compare {
+                op: CompareOp::IsNot,
+                left: Box::new(Expr::Ident("x".to_string())),
+                right: Box::new(Expr::Literal(LiteralExpr::None)),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_class_empty() {
+        assert!(try_parse("class C {}").is_ok());
     }
 }
