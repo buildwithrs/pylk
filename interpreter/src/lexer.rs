@@ -4,8 +4,7 @@ use crate::errors::LexerError;
 
 pub const KW: &[&str] = &[
     "None", "and", "as", "break", "class", "continue", "def", "del", "elif", "else", "for", "from",
-    "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "return",
-    "while",
+    "if", "import", "in", "is", "lambda", "not", "or", "pass", "return", "while",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,13 +19,11 @@ pub enum Keyword {
     Else,
     For,
     From,
-    Global,
     If,
     Import,
     In,
     Is,
     Lambda,
-    Nonlocal,
     None,
     And,
     Not,
@@ -60,8 +57,6 @@ impl From<&str> for Keyword {
             "import" => Self::Import,
             "from" => Self::From,
             "lambda" => Self::Lambda,
-            "global" => Self::Global,
-            "nonlocal" => Self::Nonlocal,
             "None" => Self::None,
             "pass" => Self::Pass,
             _ => Self::Unknown,
@@ -126,6 +121,8 @@ pub enum Token {
     RBracket, // ]
     LBrace,   // {
     RBrace,   // }
+    LBC,      // {:
+    RBC,      // :}
     Comma,    // ,
     Colon,    // :
     Dot,      // .
@@ -196,6 +193,8 @@ pub enum TokenType {
     Dot,
     Semi,
     Arrow,
+    LBC,
+    RBC,
 
     Eof,
     WhiteSpace,
@@ -277,6 +276,8 @@ impl Token {
             Token::RBracket => TokenType::RBracket,
             Token::LBrace => TokenType::LBrace,
             Token::RBrace => TokenType::RBrace,
+            Token::LBC => TokenType::LBC,
+            Token::RBC => TokenType::RBC,
             Token::Comma => TokenType::Comma,
             Token::Colon => TokenType::Colon,
             Token::Dot => TokenType::Dot,
@@ -315,200 +316,206 @@ impl Lexer {
             }
 
             self.start = self.current;
-            let tk = self.next_token()?;
-            if tk == Token::WhiteSpace {
-                continue;
+            match self.next_token() {
+                Ok(Token::WhiteSpace) => continue,
+                Ok(Token::Eof) => break,
+                Err(LexerError::EOF) => break,
+                Ok(tk) => tokens.push(tk),
+                Err(e) => return Err(e),
             }
-
-            tokens.push(tk);
         }
 
         Ok(tokens)
     }
 
     fn next_token(&mut self) -> Result<Token, LexerError> {
-        if let Some(cur) = self.advance() {
-            match cur {
-                '\n' | '\t' | ' ' => Ok(Token::WhiteSpace),
-                '(' => Ok(Token::LParen),
-                ')' => Ok(Token::RParen),
-                '[' => Ok(Token::LBracket),
-                ']' => Ok(Token::RBracket),
-                '{' => Ok(Token::LBrace),
-                '}' => Ok(Token::RBrace),
-                '.' => {
-                    if self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                        return self.parse_number(true);
-                    }
-                    Ok(Token::Dot)
+        let cur = self.advance().ok_or_else(|| LexerError::EOF)?;
+        match cur {
+            '\n' | '\t' | ' ' => Ok(Token::WhiteSpace),
+            '(' => Ok(Token::LParen),
+            ')' => Ok(Token::RParen),
+            '[' => Ok(Token::LBracket),
+            ']' => Ok(Token::RBracket),
+            '{' => {
+                if self.is_match(':') {
+                    self.advance();
+                    return Ok(Token::LBC);
                 }
-                ',' => Ok(Token::Comma),
-                ':' => Ok(Token::Colon),
-                ';' => Ok(Token::Semi),
-                '#' => {
-                    // skip line comment
-                    while let Some(ch) = self.peek() {
-                        if ch == '\n' {
-                            break;
-                        }
-                        self.advance();
-                    }
-                    Ok(Token::WhiteSpace)
+                Ok(Token::LBrace)
+            }
+            '}' => Ok(Token::RBrace),
+            '.' => {
+                if self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                    return self.parse_number(true);
                 }
-                '&' => {
-                    if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::BitAndAssign)
-                    } else {
-                        Ok(Token::BitAnd)
-                    }
+                Ok(Token::Dot)
+            }
+            ',' => Ok(Token::Comma),
+            ':' => {
+                if self.is_match('}') {
+                    self.advance();
+                    return Ok(Token::RBC);
                 }
-                '|' => {
-                    if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::BitOrAssign)
-                    } else {
-                        Ok(Token::BitOr)
+                Ok(Token::Colon)
+            }
+            ';' => Ok(Token::Semi),
+            '#' => {
+                // skip line comment
+                while let Some(ch) = self.peek() {
+                    if ch == '\n' {
+                        break;
                     }
+                    self.advance();
                 }
-                '^' => {
-                    if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::BitXorAssign)
-                    } else {
-                        Ok(Token::BitXor)
-                    }
-                }
-                '~' => Ok(Token::BitNot),
-                '+' => {
-                    if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::PlusAssign)
-                    } else {
-                        Ok(Token::Plus)
-                    }
-                }
-                '-' => {
-                    if self.is_match('>') {
-                        self.advance();
-                        Ok(Token::Arrow)
-                    } else if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::MinusAssign)
-                    } else {
-                        Ok(Token::Minus)
-                    }
-                }
-                '*' => {
-                    if self.is_match('*') {
-                        self.advance();
-                        if self.is_match('=') {
-                            self.advance();
-                            Ok(Token::PowAssign)
-                        } else {
-                            Ok(Token::Pow)
-                        }
-                    } else if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::MulAssign)
-                    } else {
-                        Ok(Token::Mul)
-                    }
-                }
-                '/' => {
-                    if self.is_match('/') {
-                        self.advance();
-                        if self.is_match('=') {
-                            self.advance();
-                            Ok(Token::FloorAssign)
-                        } else {
-                            Ok(Token::FloorDiv)
-                        }
-                    } else if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::DivAssign)
-                    } else {
-                        Ok(Token::Div)
-                    }
-                }
-                '%' => {
-                    if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::ModAssign)
-                    } else {
-                        Ok(Token::Mod)
-                    }
-                }
-                '=' => {
-                    if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::Eq)
-                    } else {
-                        Ok(Token::Assign)
-                    }
-                }
-                '<' => {
-                    if self.is_match('<') {
-                        self.advance();
-                        if self.is_match('=') {
-                            self.advance();
-                            Ok(Token::ShlAssign)
-                        } else {
-                            Ok(Token::Shl)
-                        }
-                    } else if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::Le)
-                    } else {
-                        Ok(Token::Lt)
-                    }
-                }
-                '>' => {
-                    if self.is_match('>') {
-                        self.advance();
-                        if self.is_match('=') {
-                            self.advance();
-                            Ok(Token::ShrAssign)
-                        } else {
-                            Ok(Token::Shr)
-                        }
-                    } else if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::Ge)
-                    } else {
-                        Ok(Token::Gt)
-                    }
-                }
-                '!' => {
-                    if self.is_match('=') {
-                        self.advance();
-                        Ok(Token::Ne)
-                    } else {
-                        Err(LexerError::InvalidToken(format!("`!`")))
-                    }
-                }
-                ch => {
-                    if ch.is_alphabetic() || ch.eq(&'_') {
-                        return self.parse_identifier();
-                    } else if ch.is_digit(10) {
-                        return self.parse_number(false);
-                    } else if ch == '\'' || ch == '"' {
-                        return self.parse_string(ch);
-                    }
-
-                    Err(LexerError::UnsupportToken(ch))
+                Ok(Token::WhiteSpace)
+            }
+            '&' => {
+                if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::BitAndAssign)
+                } else {
+                    Ok(Token::BitAnd)
                 }
             }
-        } else {
-            Ok(Token::Eof)
+            '|' => {
+                if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::BitOrAssign)
+                } else {
+                    Ok(Token::BitOr)
+                }
+            }
+            '^' => {
+                if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::BitXorAssign)
+                } else {
+                    Ok(Token::BitXor)
+                }
+            }
+            '~' => Ok(Token::BitNot),
+            '+' => {
+                if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::PlusAssign)
+                } else {
+                    Ok(Token::Plus)
+                }
+            }
+            '-' => {
+                if self.is_match('>') {
+                    self.advance();
+                    Ok(Token::Arrow)
+                } else if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::MinusAssign)
+                } else {
+                    Ok(Token::Minus)
+                }
+            }
+            '*' => {
+                if self.is_match('*') {
+                    self.advance();
+                    if self.is_match('=') {
+                        self.advance();
+                        Ok(Token::PowAssign)
+                    } else {
+                        Ok(Token::Pow)
+                    }
+                } else if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::MulAssign)
+                } else {
+                    Ok(Token::Mul)
+                }
+            }
+            '/' => {
+                if self.is_match('/') {
+                    self.advance();
+                    if self.is_match('=') {
+                        self.advance();
+                        Ok(Token::FloorAssign)
+                    } else {
+                        Ok(Token::FloorDiv)
+                    }
+                } else if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::DivAssign)
+                } else {
+                    Ok(Token::Div)
+                }
+            }
+            '%' => {
+                if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::ModAssign)
+                } else {
+                    Ok(Token::Mod)
+                }
+            }
+            '=' => {
+                if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::Eq)
+                } else {
+                    Ok(Token::Assign)
+                }
+            }
+            '<' => {
+                if self.is_match('<') {
+                    self.advance();
+                    if self.is_match('=') {
+                        self.advance();
+                        Ok(Token::ShlAssign)
+                    } else {
+                        Ok(Token::Shl)
+                    }
+                } else if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::Le)
+                } else {
+                    Ok(Token::Lt)
+                }
+            }
+            '>' => {
+                if self.is_match('>') {
+                    self.advance();
+                    if self.is_match('=') {
+                        self.advance();
+                        Ok(Token::ShrAssign)
+                    } else {
+                        Ok(Token::Shr)
+                    }
+                } else if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::Ge)
+                } else {
+                    Ok(Token::Gt)
+                }
+            }
+            '!' => {
+                if self.is_match('=') {
+                    self.advance();
+                    Ok(Token::Ne)
+                } else {
+                    Err(LexerError::InvalidToken(format!("`!`")))
+                }
+            }
+            ch => {
+                if ch.is_alphabetic() || ch.eq(&'_') {
+                    return self.parse_identifier();
+                } else if ch.is_digit(10) {
+                    return self.parse_number(false);
+                } else if ch == '\'' || ch == '"' {
+                    return self.parse_string(ch);
+                }
+
+                Err(LexerError::UnsupportToken(ch))
+            }
         }
     }
 
     fn parse_string(&mut self, end: char) -> Result<Token, LexerError> {
-        println!(
-            "parsing string at pos: start({}), current({})",
-            self.start, self.current
-        );
         let mut s_end = false;
         while let Some(ch) = self.peek() {
             if ch != end {
@@ -633,14 +640,6 @@ impl Lexer {
             None
         } else {
             Some(self.chars[self.current])
-        }
-    }
-
-    fn peek_next(&self) -> Option<char> {
-        if self.is_end() || self.current + 1 >= self.chars.len() {
-            None
-        } else {
-            Some(self.chars[self.current + 1])
         }
     }
 
@@ -974,10 +973,8 @@ mod tests {
     #[test]
     fn test_lexer_remaining_keywords() {
         assert_eq!(
-            lex(
-                "and as break class continue def del elif for from global import \
-                 in is lambda nonlocal not or pass return"
-            )
+            lex("and as break class continue def del elif for from import \
+                 in is lambda not or pass return")
             .unwrap(),
             vec![
                 Token::Kw(Keyword::And),
@@ -990,12 +987,10 @@ mod tests {
                 Token::Kw(Keyword::Elif),
                 Token::Kw(Keyword::For),
                 Token::Kw(Keyword::From),
-                Token::Kw(Keyword::Global),
                 Token::Kw(Keyword::Import),
                 Token::Kw(Keyword::In),
                 Token::Kw(Keyword::Is),
                 Token::Kw(Keyword::Lambda),
-                Token::Kw(Keyword::Nonlocal),
                 Token::Kw(Keyword::Not),
                 Token::Kw(Keyword::Or),
                 Token::Kw(Keyword::Pass),
@@ -1072,13 +1067,11 @@ mod tests {
         assert_eq!(Keyword::from("else"), Keyword::Else);
         assert_eq!(Keyword::from("for"), Keyword::For);
         assert_eq!(Keyword::from("from"), Keyword::From);
-        assert_eq!(Keyword::from("global"), Keyword::Global);
         assert_eq!(Keyword::from("if"), Keyword::If);
         assert_eq!(Keyword::from("import"), Keyword::Import);
         assert_eq!(Keyword::from("in"), Keyword::In);
         assert_eq!(Keyword::from("is"), Keyword::Is);
         assert_eq!(Keyword::from("lambda"), Keyword::Lambda);
-        assert_eq!(Keyword::from("nonlocal"), Keyword::Nonlocal);
         assert_eq!(Keyword::from("None"), Keyword::None);
         assert_eq!(Keyword::from("not"), Keyword::Not);
         assert_eq!(Keyword::from("or"), Keyword::Or);
@@ -1276,5 +1269,25 @@ mod tests {
             let s = format!("{}", tt);
             assert!(!s.is_empty(), "Display for {:?} was empty", tt);
         }
+    }
+
+    #[test]
+    fn test_dict_literal() {
+        let res = lex("{: 'x': 123, 'y': 456 :}");
+        assert!(res.is_ok());
+        assert_eq!(
+            vec![
+                Token::LBC,
+                Token::Str('x'.to_string()),
+                Token::Colon,
+                Token::Int(123),
+                Token::Comma,
+                Token::Str('y'.to_string()),
+                Token::Colon,
+                Token::Int(456),
+                Token::RBC
+            ],
+            res.unwrap()
+        );
     }
 }

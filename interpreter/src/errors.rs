@@ -17,6 +17,9 @@ pub enum LexerError {
 
     #[error("unsupport token: {0}")]
     UnsupportToken(char),
+
+    #[error("EOF")]
+    EOF
 }
 
 #[derive(Debug, Error)]

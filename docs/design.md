@@ -1,6 +1,9 @@
 # PyLike Interpreter Design
 
 - Does not support Indentation, use `{` and `}` for blocks.
+- Use `{:` and `:}` for Dict Literals.
+- Does not support `match` or `case` statements.
+- Does not support `nonlocal` or `global` statements.
 - Does not support class base class(no parent class).
 - Does not support `Try`, `Except`, `Finally`, `Raise`, or `Assert` statements.
 - Does not support `async` or `await` keywords.
@@ -42,11 +45,11 @@ not  or  pass  return  while
 ### Operators
 
 ```text
-+    -    *    **   /    //   %    @
++    -    *    **   /    //   %
 <<   >>   &    |    ^    ~
 <    <=   >    >=   ==   !=
 =    +=   -=   *=   /=   //=  %=   **=
-@=   &=   |=   ^=   <<=  >>=
+&=   |=   ^=   <<=  >>=
 ```
 
 `!` and `?` are not standalone Python operators. `!=` is a single comparison operator, and Python conditional expressions use the `if ... else ...` keywords.

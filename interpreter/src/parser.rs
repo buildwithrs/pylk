@@ -71,20 +71,7 @@ impl Parser {
             Token::Kw(Keyword::Pass) => Ok(Stmt::Pass),
             Token::Kw(Keyword::Break) => Ok(Stmt::Break),
             Token::Kw(Keyword::Continue) => Ok(Stmt::Continue),
-            Token::LBrace => {
-                // `{` can start a block or a dict literal expression
-                // statement. Per the grammar note, we disambiguate by
-                // trying the dict path first; if it doesn't parse as a
-                // dict entry, fall back to block.
-                let saved = self.current;
-                match self.try_parse_dict_literal_at_stmt() {
-                    Ok(expr) => Ok(Stmt::ExprStmt(Box::new(expr))),
-                    Err(_) => {
-                        self.current = saved;
-                        Ok(Stmt::Block(self.parse_block()?))
-                    }
-                }
-            }
+            Token::LBrace => Ok(Stmt::Block(self.parse_block()?)),
             _ => self.parse_assignment_stmt(),
         }
     }
@@ -895,7 +882,7 @@ impl Parser {
             Err(_) => match t {
                 Token::Ident(id) => Ok(Expr::Ident(id)),
                 Token::LBracket => self.parse_list_literal(),
-                Token::LBrace => self.parse_dict_literal(),
+                Token::LBC => self.parse_dict_literal(),
                 Token::LParen => self.parse_tuple_or_grouped(),
                 _ => Err(ParserError::UnsupportToken(t)),
             },
@@ -1048,7 +1035,7 @@ impl Parser {
         println!("parse dict_literal...");
 
         let mut entries = Vec::new();
-        if !self.check(&Token::RBrace) {
+        if !self.check(&Token::RBC) {
             let key = self.parse_expression()?;
             self.consume(TokenType::Colon)?;
             let value = self.parse_expression()?;
@@ -1061,7 +1048,7 @@ impl Parser {
             while self.check(&Token::Comma) {
                 self.advance();
                 // allow trailing comma: `{a: 1,}`
-                if self.check(&Token::RBrace) {
+                if self.check(&Token::RBC) {
                     break;
                 }
 
@@ -1075,7 +1062,8 @@ impl Parser {
                 });
             }
         }
-        self.consume(TokenType::RBrace)?;
+        self.consume(TokenType::RBC)?;
+        
         let dict = Expr::DictLiteral(entries);
         println!("parse dict_literal...: dict: {dict}");
         Ok(dict)
@@ -2122,8 +2110,9 @@ mod tests {
 
     #[test]
     fn test_expr_dict_literal() {
+        // `{: "a": 1 :}` — single entry dict with LBC `{:` and RBC `:}`.
         assert_eq!(
-            expr_of(r#"{"a": 1};"#),
+            expr_of(r#"{: "a": 1 :};"#),
             Expr::DictLiteral(vec![crate::ast::DictEntry {
                 key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
                 value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
@@ -2791,10 +2780,15 @@ mod tests {
     // -----------------------------------------------------------------
     // Empty block / empty dict.
     //
-    // `parse_stmt` always tries `try_parse_dict_literal_at_stmt`
-    // first, so a bare `{}` is an empty *dict* (ExprStmt), not a
-    // block. A block with no statements can only appear as a function
-    // body, where `parse_block` accepts the immediately-closing `}`.
+    // `LBrace` is now reserved for blocks only, so a bare `{}` is
+    // always a `Stmt::Block` (not an empty dict). An empty *dict*
+    // requires the new `{: :}` delimiters (LBC + RBC) and is
+    // produced by `parse_dict_literal` inside an expression context
+    // — `parse_stmt` falls through to `parse_assignment_stmt`, which
+    // wraps the resulting `Expr::DictLiteral(Vec::new())` in an
+    // `ExprStmt`. A block with no statements can only appear as a
+    // function body, where `parse_block` accepts the immediately-
+    // closing `}`.
     // -----------------------------------------------------------------
 
     // -- empty block / empty dict -------------------------------------
@@ -2802,7 +2796,8 @@ mod tests {
     #[test]
     fn test_parse_empty_block() {
         // `def f() {}` is the only way to get a `Stmt::Block` with
-        // no statements at the top level: a bare `{}` is a dict.
+        // no statements at the top level: `{}` is always a block now
+        // that dicts use the `{: :}` delimiters.
         let program = parse_source("def f() {}");
         assert_eq!(
             program,
@@ -2816,10 +2811,11 @@ mod tests {
 
     #[test]
     fn test_parse_empty_dict_expr() {
-        // Bare `{}` is always parsed as an empty dict (not a block)
-        // by `try_parse_dict_literal_at_stmt`. The trailing `;` is
-        // consumed by the outer `parse` loop.
-        let program = parse_source("{};");
+        // Empty dict literal: `{: :}`. The trailing `;` is consumed
+        // by the outer `parse` loop. The dict body is empty because
+        // `parse_dict_literal` skips key/value parsing when the next
+        // token after LBC is RBC.
+        let program = parse_source("{: :};");
         assert_eq!(
             program,
             Program(vec![Node::new(Stmt::ExprStmt(Box::new(
@@ -2830,8 +2826,9 @@ mod tests {
 
     #[test]
     fn test_parse_block_with_one_stmt() {
-        // `{ 1 }` is a block (not a dict) because the first inner
-        // expression is not followed by `:`.
+        // `{ 1 }` is a block — under the new dict syntax, the
+        // opening `{` (without a trailing `:`) is always `LBrace`,
+        // which `parse_stmt` routes to `parse_block`.
         let program = parse_source("{ 1 }");
         assert_eq!(
             program,
@@ -3117,8 +3114,10 @@ mod tests {
 
     #[test]
     fn test_expr_nested_dict() {
+        // Nested dict: outer `{: "a": {: "b": 1 :} :}` — each level
+        // wraps in its own `{:` / `:}` delimiters.
         assert_eq!(
-            expr_of(r#"{"a": {"b": 1}};"#),
+            expr_of(r#"{: "a": {: "b": 1 :} :};"#),
             Expr::DictLiteral(vec![crate::ast::DictEntry {
                 key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
                 value: Box::new(Expr::DictLiteral(vec![crate::ast::DictEntry {
@@ -3131,8 +3130,10 @@ mod tests {
 
     #[test]
     fn test_expr_dict_multi_entry() {
+        // Multi-entry dict: `{: "a": 1, "b": 2 :}` — the `,` separates
+        // entries inside the LBC/RBC-bracketed body.
         assert_eq!(
-            expr_of(r#"{"a": 1, "b": 2};"#),
+            expr_of(r#"{: "a": 1, "b": 2 :};"#),
             Expr::DictLiteral(vec![
                 crate::ast::DictEntry {
                     key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
@@ -3148,14 +3149,226 @@ mod tests {
 
     #[test]
     fn test_expr_dict_trailing_comma() {
-        // `parse_dict_literal` allows a trailing `,` before `}`.
+        // `parse_dict_literal` allows a trailing `,` before the closing
+        // `:}` delimiter.
         assert_eq!(
-            expr_of(r#"{"a": 1,}"#),
+            expr_of(r#"{: "a": 1, :};"#),
             Expr::DictLiteral(vec![crate::ast::DictEntry {
                 key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
                 value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
             }])
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Additional dict-literal shapes.
+    //
+    // The existing dict tests cover only single-entry string-keyed
+    // forms. These tests pin down integer keys, identifier keys,
+    // mixed key/value types, expression values, dict-in-arg position,
+    // dict assignment, and dict indexing — so the new `{: :}`
+    // delimiters can't silently regress any of them.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_expr_dict_int_key() {
+        // Integer key — `parse_dict_literal` parses the key as a full
+        // expression, so int literals work the same as string literals.
+        assert_eq!(
+            expr_of(r#"{: 1: "a" :};"#),
+            Expr::DictLiteral(vec![crate::ast::DictEntry {
+                key: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                value: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+            }])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_ident_key() {
+        // Bare-identifier key. The colon separates key and value; the
+        // key is parsed as an expression and ends up as `Expr::Ident`.
+        assert_eq!(
+            expr_of(r#"{: x: 1 :};"#),
+            Expr::DictLiteral(vec![crate::ast::DictEntry {
+                key: Box::new(Expr::Ident("x".to_string())),
+                value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_bool_and_none_values() {
+        // Mixed literal value types: int + boolean + None.
+        assert_eq!(
+            expr_of(r#"{: "a": True, "b": None :};"#),
+            Expr::DictLiteral(vec![
+                crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Boolean(true))),
+                },
+                crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("b".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::None)),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_expression_value() {
+        // The value side is a full expression — here, an arithmetic
+        // expression — so `parse_expression` runs again on the RHS.
+        assert_eq!(
+            expr_of(r#"{: "sum": 1 + 2 :};"#),
+            Expr::DictLiteral(vec![crate::ast::DictEntry {
+                key: Box::new(Expr::Literal(LiteralExpr::Str("sum".to_string()))),
+                value: Box::new(Expr::BinaryExpr {
+                    left: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                    op: BinaryOp::Plus,
+                    right: Box::new(Expr::Literal(LiteralExpr::Int(2))),
+                }),
+            }])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_list_value() {
+        // List literal as the value side — proves the value parser
+        // returns to `parse_primary` and re-enters list parsing.
+        assert_eq!(
+            expr_of(r#"{: "xs": [1, 2, 3] :};"#),
+            Expr::DictLiteral(vec![crate::ast::DictEntry {
+                key: Box::new(Expr::Literal(LiteralExpr::Str("xs".to_string()))),
+                value: Box::new(Expr::ListLiteral(vec![
+                    Expr::Literal(LiteralExpr::Int(1)),
+                    Expr::Literal(LiteralExpr::Int(2)),
+                    Expr::Literal(LiteralExpr::Int(3)),
+                ])),
+            }])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_in_func_call() {
+        // Dict passed as a function-call argument. The dict's `{:`
+        // and `:}` are lexed as LBC/RBC, distinct from the `(`/`)` of
+        // the call.
+        assert_eq!(
+            expr_of(r#"f({: "a": 1 :});"#),
+            Expr::FuncCall {
+                fn_expr: Box::new(Expr::Ident("f".to_string())),
+                args: vec![Expr::DictLiteral(vec![crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                }])],
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_dict_assign() {
+        // `d = {: "a": 1 :};` — assigning a dict literal to a name.
+        let program = parse_source(r#"d = {: "a": 1 :};"#);
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Assign {
+                target: AssignTarget::Name("d".to_string()),
+                op: AssignOperator::Assign,
+                expr: Box::new(Expr::DictLiteral(vec![crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                }])),
+            })])
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_index_access() {
+        // `d["a"]` where `d` is bound to a dict — exercises
+        // `parse_postfix_op`'s `[...]` branch on a primary expression.
+        // Here `d` is just an ident; the dict access is a pure
+        // postfix-`Expr::Index` over it.
+        assert_eq!(
+            expr_of(r#"d["a"];"#),
+            Expr::Index {
+                target: Box::new(Expr::Ident("d".to_string())),
+                index: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_expr_dict_in_arith() {
+        // Dict literal as an operand of `+`. The dict's full
+        // `{: ... :}` form is parsed inside `parse_expression`.
+        assert_eq!(
+            expr_of(r#"{: "a": 1 :} + 1;"#),
+            Expr::BinaryExpr {
+                left: Box::new(Expr::DictLiteral(vec![crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                }])),
+                op: BinaryOp::Plus,
+                right: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_dict_in_block() {
+        // Dict literal as a statement inside a block. The block's `{}`
+        // is LBrace/RBrace, the dict inside uses `{: ... :}` (LBC/RBC),
+        // and `parse_stmt` falls through to `parse_assignment_stmt`,
+        // which wraps the dict in an `ExprStmt`.
+        let program = parse_source(r#"{ {: "a": 1 :} }"#);
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::Block(Block(vec![Stmt::ExprStmt(
+                Box::new(Expr::DictLiteral(vec![crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("a".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(1))),
+                }])),
+            )])))])
+        );
+    }
+
+    #[test]
+    fn test_parse_dict_at_stmt_position() {
+        // Dict literal directly at statement position (no enclosing
+        // expression). Exercises the path where `parse_stmt` falls
+        // through to `parse_assignment_stmt` → `parse_expression`
+        // → `parse_primary` → `parse_dict_literal`.
+        let program = parse_source(r#"{: "k": 42 :};"#);
+        assert_eq!(
+            program,
+            Program(vec![Node::new(Stmt::ExprStmt(Box::new(
+                Expr::DictLiteral(vec![crate::ast::DictEntry {
+                    key: Box::new(Expr::Literal(LiteralExpr::Str("k".to_string()))),
+                    value: Box::new(Expr::Literal(LiteralExpr::Int(42))),
+                }])
+            )))])
+        );
+    }
+
+    #[test]
+    fn test_parse_dict_missing_colon_after_value() {
+        // `{: "a" 1 :}` — no `:` between key and value. The parser
+        // expects `:` after the key and fails with `ExpectTokenType`.
+        let err = try_parse(r#"{: "a" 1 :};"#).expect_err("expected parser error");
+        assert!(
+            matches!(err, ParserError::ExpectTokenType(_, _)),
+            "expected ExpectTokenType, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_dict_unterminated() {
+        // `{: "a": 1` with no closing `:}`. The parser consumes the
+        // `1` then tries to read `,` or `:}` and falls off the end
+        // of the token stream, surfacing `ParserError::EOF`.
+        let err = try_parse(r#"{: "a": 1"#).expect_err("expected EOF error");
+        assert!(matches!(err, ParserError::EOF));
     }
 
     #[test]
